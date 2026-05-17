@@ -1,0 +1,158 @@
+@import 'tailwindcss';
+
+/* Tailwind v4 auto-detects sources only within the current project.
+   Workspace packages (transpiled via Next's transpilePackages) need explicit
+   @source declarations or their classes get purged. This is why the editor's
+   AiChatPanel rendered without `w-80` and ballooned to fill the flex parent,
+   among other layout regressions across the editor surface. */
+@source "../../../../packages/editor/src/**/*.{ts,tsx}";
+@source "../../../../packages/engine/src/**/*.{ts,tsx}";
+@source "../../../../packages/shared/src/**/*.{ts,tsx}";
+
+@theme {
+  /* USWDS-aligned neutral palette */
+  --color-bg-primary: #faf9f7;
+  --color-bg-secondary: #f3f1ed;
+  --color-bg-card: #ffffff;
+  --color-bg-dark: #1b1b1b;
+  --color-bg-dark-secondary: #2e2e2e;
+  --color-border: #dfe1e2;
+  --color-border-hover: #c6cace;
+
+  /* Gold accent — kept from Greek theme */
+  --color-gold: #c9a96e;
+  --color-gold-light: #dcc99a;
+  --color-gold-dark: #a88a4e;
+  --color-gold-glow: rgba(201, 169, 110, 0.2);
+
+  /* USWDS ink + base text */
+  --color-text-primary: #1b1b1b;
+  --color-text-secondary: #565c65;
+  --color-text-muted: #919191;
+
+  /* USWDS functional colors */
+  --color-success: #00a91c;
+  --color-info: #00bde3;
+  --color-warning: #ffbe2e;
+  --color-error: #d54309;
+
+  /* shadcn token colors for Tailwind v4 */
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+}
+
+/* shadcn CSS variables — light mode */
+:root {
+  --background: 0 0% 98%;
+  --foreground: 0 0% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 11%;
+  --primary: 263 55% 76%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 0 0% 95%;
+  --muted-foreground: 0 0% 40%;
+  --border: 0 0% 88%;
+}
+
+/* shadcn CSS variables — dark mode */
+.dark {
+  --background: 240 20% 4%;
+  --foreground: 0 0% 93%;
+  --card: 240 10% 8%;
+  --card-foreground: 0 0% 93%;
+  --primary: 263 55% 76%;
+  --primary-foreground: 0 0% 4%;
+  --muted: 240 10% 14%;
+  --muted-foreground: 0 0% 55%;
+  --border: 0 0% 18%;
+}
+
+html {
+  scroll-behavior: smooth;
+  font-size: 16px; /* USWDS base */
+}
+
+body {
+  background-color: #0a0a0f;
+  color: #ffffff;
+  line-height: 1.625;
+}
+
+::selection {
+  background-color: #8b7ec8;
+  color: white;
+}
+
+/*
+ * Global keyboard focus indicator. Many inputs/buttons across the app strip
+ * the default outline (`outline-none`) for the click look but forget to add
+ * a focus-visible ring back. Without this, keyboard users lose their place.
+ *
+ * `:focus-visible` only fires for keyboard / programmatic focus — mouse
+ * clicks stay clean.
+ */
+:focus-visible {
+  outline: 2px solid #8b7ec8;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--color-bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+
+/* Gold text gradient */
+.text-gold-gradient {
+  background: linear-gradient(135deg, #c9a96e, #dcc99a, #a88a4e);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-gold-gradient-light {
+  background: linear-gradient(135deg, #dcc99a, #f0deb0, #c9a96e);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.glow-gold {
+  box-shadow: 0 0 24px var(--color-gold-glow);
+}
+
+/* Greek divider */
+.greek-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.greek-divider::before,
+.greek-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-gold), transparent);
+}
+
+/* Subtle grid */
+.grid-pattern {
+  background-image:
+    linear-gradient(rgba(201, 169, 110, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(201, 169, 110, 0.035) 1px, transparent 1px);
+  background-size: 80px 80px;
+}
+
+/* Card effects */
+.card-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.card-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.06);
+}

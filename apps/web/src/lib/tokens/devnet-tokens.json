@@ -1,0 +1,16 @@
+[
+  {
+    "slug": "drift-racer",
+    "name": "Drift Racer",
+    "symbol": "DRIFT",
+    "playHref": "/play/drift-racer",
+    "category": "racing",
+    "description": "Hand-coded Three.js drift racer with real physics",
+    "mint": "4b1bXjETV2ymaXfFhcDS94K2BTDhQDx83sMkMgLQ5tBA",
+    "poolAddress": "CPsAn8eXZoXpgwd1qQZQBy6XEeVZPAoM5rf3w98iUM3w",
+    "configAddress": "9mQshDg87yr1Qgan55fn6ckQTnqJRyHmYhqgPNbkEJuK",
+    "cluster": "devnet",
+    "deployTx": "E6fUAEajECo1kdeJtevoru6W2RkPGd1gyQitu54TrvBX1aGYwvgf4AKnywp9uBuEUnkhA4iCFtg2TKYoFAE7psw",
+    "launchedAt": "2026-05-12T04:47:41.390Z"
+  }
+]

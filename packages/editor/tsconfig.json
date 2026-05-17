@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    // Editor is consumed via its source files inside this monorepo (Next's
+    // transpilePackages picks them up directly). We don't ship a `.d.ts`
+    // bundle, so `declaration: true` from the base config only causes
+    // declaration-portability errors on third-party generics like
+    // zustand+immer+zundo without giving us anything in return.
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "dist"]
+}
