@@ -5,7 +5,15 @@ import { checkRateLimit, clientIp } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
-const ALLOWED = new Set(['brick-smash', 'cube-runner', 'neon-asteroids']);
+const ALLOWED = new Set([
+  'brick-smash',
+  'cube-runner',
+  'neon-asteroids',
+  'sky-glider',
+  'hex-tower',
+  'drone-arena',
+  'voxel-heist',
+]);
 
 type Ctx = { params: Promise<{ game: string }> };
 

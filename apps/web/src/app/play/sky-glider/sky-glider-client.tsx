@@ -5,19 +5,16 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import type { GameContext } from '@/components/games/_shared/entry-gate';
-import { NeonAsteroidsIntro } from './neon-asteroids-intro';
+import { SkyGliderIntro } from './sky-glider-intro';
 
-const NeonAsteroids = dynamic(
-  () =>
-    import('@/components/games/neon-asteroids/neon-asteroids').then(
-      (m) => m.NeonAsteroids,
-    ),
+const SkyGlider = dynamic(
+  () => import('@/components/games/sky-glider/sky-glider').then((m) => m.SkyGlider),
   { ssr: false, loading: () => <LoadingScreen /> },
 );
 
-const ENTRY_STORAGE_KEY = 'neon-asteroids:entry';
+const ENTRY_STORAGE_KEY = 'sky-glider:entry';
 
-export function NeonAsteroidsClient() {
+export function SkyGliderClient() {
   const [ctx, setCtx] = useState<GameContext | null>(null);
 
   useEffect(() => {
@@ -44,12 +41,12 @@ export function NeonAsteroidsClient() {
   };
 
   return (
-    <div className="relative h-screen w-screen bg-[#04060c] text-white overflow-hidden">
+    <div className="relative h-screen w-screen bg-[#05070f] text-white overflow-hidden">
       {!ctx && <TopBar />}
       {ctx ? (
-        <NeonAsteroids gameContext={ctx} onExit={exit} />
+        <SkyGlider gameContext={ctx} onExit={exit} />
       ) : (
-        <NeonAsteroidsIntro onEntered={enter} />
+        <SkyGliderIntro onEntered={enter} />
       )}
     </div>
   );
@@ -57,7 +54,7 @@ export function NeonAsteroidsClient() {
 
 function TopBar() {
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center justify-end gap-3 px-4 py-3">
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center justify-between gap-3 px-4 py-3">
       <Link
         href="/explore"
         className="pointer-events-auto inline-flex items-center gap-1 rounded-full bg-black/40 backdrop-blur px-3 py-1.5 text-xs font-mono text-white/80 hover:bg-black/60"
@@ -70,11 +67,8 @@ function TopBar() {
 
 function LoadingScreen() {
   return (
-    <div className="absolute inset-0 flex items-center justify-center">
-      <div className="flex flex-col items-center gap-3 text-white/60 font-mono text-xs">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
-        Loading hyperspace…
-      </div>
+    <div className="absolute inset-0 flex items-center justify-center bg-[#05070f] text-cyan-200 font-mono text-xs uppercase tracking-widest animate-pulse">
+      Booting up the canyon…
     </div>
   );
 }

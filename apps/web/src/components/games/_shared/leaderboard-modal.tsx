@@ -11,14 +11,23 @@ import { Trophy, X } from 'lucide-react';
 // `{ entries: Array<row> }` where each row has the column the modal renders.
 
 export interface LeaderboardConfig {
-  gameKey: 'drift-racer' | 'neon-asteroids' | 'cube-runner' | 'brick-smash';
+  gameKey:
+    | 'drift-racer'
+    | 'neon-asteroids'
+    | 'cube-runner'
+    | 'brick-smash'
+    | 'sky-glider'
+    | 'hex-tower'
+    | 'drone-arena'
+    | 'voxel-heist';
   title: string;
   primaryLabel: string;
   /** column to read on each row to render the rank value */
   primaryField:
     | 'score'
     | 'distance_m'
-    | 'best_lap_sec';
+    | 'best_lap_sec'
+    | 'height_m';
   /** Optional secondary metric (e.g. wave, coins, drift_score) */
   secondaryLabel?: string;
   secondaryField?:
@@ -26,7 +35,9 @@ export interface LeaderboardConfig {
     | 'coins'
     | 'level_reached'
     | 'drift_score'
-    | 'bricks_destroyed';
+    | 'bricks_destroyed'
+    | 'combo_max'
+    | 'vaults_cracked';
   /** Format the primary value (eg "12500" or "0:47.123"). */
   formatPrimary?: (v: number) => string;
   formatSecondary?: (v: number) => string;

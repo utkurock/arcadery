@@ -60,6 +60,66 @@ const GAMES: Record<string, GameConfig> = {
         ? { code: 'too_fast', message: 'Run too short for a score' }
         : null,
   },
+  'sky-glider': {
+    table: 'sky_glider_scores',
+    selectCols:
+      'id, wallet_address, display_name, distance_m, combo_max, duration_sec, created_at',
+    orderCol: 'distance_m',
+    fields: [
+      { key: 'distanceM', col: 'distance_m', kind: 'int', min: 0, max: 1_000_000 },
+      { key: 'comboMax', col: 'combo_max', kind: 'int', min: 0, max: 999 },
+      { key: 'durationSec', col: 'duration_sec', kind: 'num', min: 0, max: 36000 },
+    ],
+    plausibility: (v) =>
+      v.distance_m > v.duration_sec * 220
+        ? { code: 'too_fast', message: 'Distance vs duration is implausible' }
+        : null,
+  },
+  'hex-tower': {
+    table: 'hex_tower_scores',
+    selectCols:
+      'id, wallet_address, display_name, height_m, combo_max, duration_sec, created_at',
+    orderCol: 'height_m',
+    fields: [
+      { key: 'heightM', col: 'height_m', kind: 'int', min: 0, max: 1_000_000 },
+      { key: 'comboMax', col: 'combo_max', kind: 'int', min: 0, max: 999 },
+      { key: 'durationSec', col: 'duration_sec', kind: 'num', min: 0, max: 36000 },
+    ],
+    plausibility: (v) =>
+      v.height_m > v.duration_sec * 18
+        ? { code: 'too_fast', message: 'Climb vs duration is implausible' }
+        : null,
+  },
+  'drone-arena': {
+    table: 'drone_arena_scores',
+    selectCols:
+      'id, wallet_address, display_name, score, wave_reached, duration_sec, created_at',
+    orderCol: 'score',
+    fields: [
+      { key: 'score', col: 'score', kind: 'int', min: 0, max: 100_000_000 },
+      { key: 'waveReached', col: 'wave_reached', kind: 'int', min: 1, max: 9999 },
+      { key: 'durationSec', col: 'duration_sec', kind: 'num', min: 0, max: 36000 },
+    ],
+    plausibility: (v) =>
+      v.duration_sec < 2 && v.score > 0
+        ? { code: 'too_fast', message: 'Run too short for a score' }
+        : null,
+  },
+  'voxel-heist': {
+    table: 'voxel_heist_scores',
+    selectCols:
+      'id, wallet_address, display_name, score, vaults_cracked, duration_sec, created_at',
+    orderCol: 'score',
+    fields: [
+      { key: 'score', col: 'score', kind: 'int', min: 0, max: 100_000_000 },
+      { key: 'vaultsCracked', col: 'vaults_cracked', kind: 'int', min: 0, max: 9999 },
+      { key: 'durationSec', col: 'duration_sec', kind: 'num', min: 0, max: 36000 },
+    ],
+    plausibility: (v) =>
+      v.duration_sec < 2 && v.score > 0
+        ? { code: 'too_fast', message: 'Run too short for a score' }
+        : null,
+  },
 };
 
 type Ctx = { params: Promise<{ game: string }> };

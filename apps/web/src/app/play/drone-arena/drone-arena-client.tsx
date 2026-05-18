@@ -5,19 +5,17 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import type { GameContext } from '@/components/games/_shared/entry-gate';
-import { NeonAsteroidsIntro } from './neon-asteroids-intro';
+import { DroneArenaIntro } from './drone-arena-intro';
 
-const NeonAsteroids = dynamic(
+const DroneArena = dynamic(
   () =>
-    import('@/components/games/neon-asteroids/neon-asteroids').then(
-      (m) => m.NeonAsteroids,
-    ),
+    import('@/components/games/drone-arena/drone-arena').then((m) => m.DroneArena),
   { ssr: false, loading: () => <LoadingScreen /> },
 );
 
-const ENTRY_STORAGE_KEY = 'neon-asteroids:entry';
+const ENTRY_STORAGE_KEY = 'drone-arena:entry';
 
-export function NeonAsteroidsClient() {
+export function DroneArenaClient() {
   const [ctx, setCtx] = useState<GameContext | null>(null);
 
   useEffect(() => {
@@ -44,12 +42,12 @@ export function NeonAsteroidsClient() {
   };
 
   return (
-    <div className="relative h-screen w-screen bg-[#04060c] text-white overflow-hidden">
+    <div className="relative h-screen w-screen bg-[#05060f] text-white overflow-hidden">
       {!ctx && <TopBar />}
       {ctx ? (
-        <NeonAsteroids gameContext={ctx} onExit={exit} />
+        <DroneArena gameContext={ctx} onExit={exit} />
       ) : (
-        <NeonAsteroidsIntro onEntered={enter} />
+        <DroneArenaIntro onEntered={enter} />
       )}
     </div>
   );
@@ -70,11 +68,8 @@ function TopBar() {
 
 function LoadingScreen() {
   return (
-    <div className="absolute inset-0 flex items-center justify-center">
-      <div className="flex flex-col items-center gap-3 text-white/60 font-mono text-xs">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
-        Loading hyperspace…
-      </div>
+    <div className="absolute inset-0 flex items-center justify-center bg-[#05060f] text-cyan-200 font-mono text-xs uppercase tracking-widest animate-pulse">
+      Booting the colosseum…
     </div>
   );
 }

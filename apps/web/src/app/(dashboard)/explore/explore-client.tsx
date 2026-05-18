@@ -155,6 +155,38 @@ const BUILTIN_TEMPLATES: FeaturedTemplate[] = [
     category: 'arcade',
     created_at: '2026-05-12T00:00:00.000Z',
   },
+  {
+    id: '__builtin_sky_glider__',
+    name: 'Sky Glider',
+    description:
+      'Neon canyon wingsuit — dive through procedural ravines, slipstream scoring rings, and chain combos at terminal velocity.',
+    category: 'flight',
+    created_at: '2026-05-19T00:00:00.000Z',
+  },
+  {
+    id: '__builtin_hex_tower__',
+    name: 'Hex Tower',
+    description:
+      'Pastel-isometric vertical climb — chain-jump between crumbling hex platforms, ground-pound combos, climb until gravity wins.',
+    category: 'platformer',
+    created_at: '2026-05-19T00:00:00.000Z',
+  },
+  {
+    id: '__builtin_drone_arena__',
+    name: 'Drone Arena',
+    description:
+      'Third-person drone combat — dash, lock-on missiles, and survive escalating mob waves in a PBR-lit holographic colosseum.',
+    category: 'shooter',
+    created_at: '2026-05-19T00:00:00.000Z',
+  },
+  {
+    id: '__builtin_voxel_heist__',
+    name: 'Voxel Heist',
+    description:
+      'Speedrun voxel maze — slip through swinging laser grids, crack glowing vaults, and exfil before the alarm runs your clock down.',
+    category: 'stealth',
+    created_at: '2026-05-19T00:00:00.000Z',
+  },
 ];
 
 function builtinHref(id: string): string | null {
@@ -162,6 +194,10 @@ function builtinHref(id: string): string | null {
   if (id === '__builtin_neon_asteroids__') return '/play/neon-asteroids';
   if (id === '__builtin_cube_runner__') return '/play/cube-runner';
   if (id === '__builtin_brick_smash__') return '/play/brick-smash';
+  if (id === '__builtin_sky_glider__') return '/play/sky-glider';
+  if (id === '__builtin_hex_tower__') return '/play/hex-tower';
+  if (id === '__builtin_drone_arena__') return '/play/drone-arena';
+  if (id === '__builtin_voxel_heist__') return '/play/voxel-heist';
   return null;
 }
 

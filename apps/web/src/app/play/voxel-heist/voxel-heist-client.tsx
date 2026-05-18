@@ -5,19 +5,17 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import type { GameContext } from '@/components/games/_shared/entry-gate';
-import { NeonAsteroidsIntro } from './neon-asteroids-intro';
+import { VoxelHeistIntro } from './voxel-heist-intro';
 
-const NeonAsteroids = dynamic(
+const VoxelHeist = dynamic(
   () =>
-    import('@/components/games/neon-asteroids/neon-asteroids').then(
-      (m) => m.NeonAsteroids,
-    ),
+    import('@/components/games/voxel-heist/voxel-heist').then((m) => m.VoxelHeist),
   { ssr: false, loading: () => <LoadingScreen /> },
 );
 
-const ENTRY_STORAGE_KEY = 'neon-asteroids:entry';
+const ENTRY_STORAGE_KEY = 'voxel-heist:entry';
 
-export function NeonAsteroidsClient() {
+export function VoxelHeistClient() {
   const [ctx, setCtx] = useState<GameContext | null>(null);
 
   useEffect(() => {
@@ -44,12 +42,12 @@ export function NeonAsteroidsClient() {
   };
 
   return (
-    <div className="relative h-screen w-screen bg-[#04060c] text-white overflow-hidden">
+    <div className="relative h-screen w-screen bg-[#06080d] text-white overflow-hidden">
       {!ctx && <TopBar />}
       {ctx ? (
-        <NeonAsteroids gameContext={ctx} onExit={exit} />
+        <VoxelHeist gameContext={ctx} onExit={exit} />
       ) : (
-        <NeonAsteroidsIntro onEntered={enter} />
+        <VoxelHeistIntro onEntered={enter} />
       )}
     </div>
   );
@@ -70,11 +68,8 @@ function TopBar() {
 
 function LoadingScreen() {
   return (
-    <div className="absolute inset-0 flex items-center justify-center">
-      <div className="flex flex-col items-center gap-3 text-white/60 font-mono text-xs">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
-        Loading hyperspace…
-      </div>
+    <div className="absolute inset-0 flex items-center justify-center bg-[#06080d] text-amber-200 font-mono text-xs uppercase tracking-widest animate-pulse">
+      Picking the lock…
     </div>
   );
 }

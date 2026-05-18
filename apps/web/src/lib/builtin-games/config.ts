@@ -9,7 +9,15 @@ export const BUILTIN_ENTRY_FEE_LAMPORTS = Math.round(
   BUILTIN_ENTRY_FEE_SOL * LAMPORTS_PER_SOL,
 );
 
-const BUILTIN_GAME_KEYS = ['neon-asteroids', 'cube-runner', 'brick-smash'] as const;
+const BUILTIN_GAME_KEYS = [
+  'neon-asteroids',
+  'cube-runner',
+  'brick-smash',
+  'sky-glider',
+  'hex-tower',
+  'drone-arena',
+  'voxel-heist',
+] as const;
 export type BuiltinGameKey = (typeof BUILTIN_GAME_KEYS)[number];
 
 /** Client-safe accessor — returns null if unset or set to the all-zero sentinel. */
