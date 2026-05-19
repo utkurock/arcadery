@@ -259,25 +259,32 @@ export function TemplatesClient({ templates }: { templates: Template[] }) {
   });
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 md:px-8 lg:px-10">
-      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-white">Templates</h1>
-          <p className="mt-0.5 text-sm text-white/40">
-            Drop into a playable game, or remix a 3D showcase into your own.
-          </p>
-        </div>
-        <div className="relative w-full md:w-64">
-          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/25" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search templates..."
-            className="w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-8 pr-3 text-xs text-white/80 placeholder:text-white/25 outline-none transition-colors focus:border-[#8b7ec8]/40"
-          />
+    // Full-width flex layout matching /explore. Removed the previous
+    // `mx-auto max-w-7xl` cap because on wide monitors the 4-column grid was
+    // collapsing the card hero area to ~290px while Explore's same grid hits
+    // ~390px. Cards now render at the same size across listing pages.
+    <div className="flex h-full flex-col">
+      <div className="shrink-0 border-b border-white/[0.06] px-4 pt-5 pb-4 sm:px-6 md:px-8 lg:px-10">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-lg font-semibold text-white">Templates</h1>
+            <p className="mt-0.5 text-xs text-white/30">
+              Drop into a playable game, or remix a 3D showcase into your own.
+            </p>
+          </div>
+          <div className="relative w-full sm:w-56">
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/25" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search templates..."
+              className="w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-8 pr-3 text-xs text-white/80 placeholder:text-white/25 outline-none transition-colors focus:border-[#8b7ec8]/40"
+            />
+          </div>
         </div>
       </div>
 
+      <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 md:px-8 lg:px-10">
       {sorted.length > 0 && (
         <div className="mb-6 flex flex-wrap gap-2">
           <CategoryPill
@@ -318,7 +325,7 @@ export function TemplatesClient({ templates }: { templates: Template[] }) {
                 count={playableTemplates.length}
                 accent="text-emerald-300"
               />
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {playableTemplates.map((t) => (
                   <TemplateCard key={t.id} template={t} signedIn={isSignedIn} />
                 ))}
@@ -335,7 +342,7 @@ export function TemplatesClient({ templates }: { templates: Template[] }) {
                 count={showcaseTemplates.length}
                 accent="text-sky-300"
               />
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {showcaseTemplates.map((t) => (
                   <TemplateCard key={t.id} template={t} signedIn={isSignedIn} />
                 ))}
@@ -344,6 +351,7 @@ export function TemplatesClient({ templates }: { templates: Template[] }) {
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }

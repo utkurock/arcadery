@@ -27,7 +27,6 @@ export interface PublishedGame {
   slug: string;
   name: string;
   creator_name: string;
-  scene: { name?: string };
   created_at: string;
 }
 
@@ -282,7 +281,7 @@ export function ExploreClient({
                   <h2 className="text-sm font-semibold text-white/80">Featured templates</h2>
                   <span className="text-[11px] text-white/30">{playableTemplates.length}</span>
                 </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                   {playableTemplates.map((t) => (
                     <TemplateCard key={t.id} template={t} />
                   ))}
@@ -300,7 +299,7 @@ export function ExploreClient({
                     Pan to explore
                   </span>
                 </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                   {showcaseTemplates.map((t) => (
                     <TemplateCard key={t.id} template={t} />
                   ))}
@@ -315,7 +314,7 @@ export function ExploreClient({
                   <h2 className="text-sm font-semibold text-white/80">Community games</h2>
                   <span className="text-[11px] text-white/30">{filteredGames.length}</span>
                 </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                   {filteredGames.map((game) => (
                     <Link
                       key={game.id}

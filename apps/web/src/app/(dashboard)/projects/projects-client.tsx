@@ -39,11 +39,15 @@ export function ProjectsClient({
     : projects;
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 md:px-8 lg:px-10">
-      <div className="mb-6 flex items-center justify-between gap-3">
+    // Matches /explore: full-width flex column instead of max-w-7xl. Same
+    // grid expands to 5 cols on 2xl so ultrawide monitors don't end up with
+    // four oversized cards.
+    <div className="flex h-full flex-col">
+      <div className="shrink-0 border-b border-white/[0.06] px-4 pt-5 pb-4 sm:px-6 md:px-8 lg:px-10">
+      <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="truncate text-xl font-semibold text-white">My Games</h1>
-          <p className="mt-0.5 text-sm text-white/40">
+          <h1 className="truncate text-lg font-semibold text-white">My Games</h1>
+          <p className="mt-0.5 text-xs text-white/30">
             {projects.length} project{projects.length !== 1 ? 's' : ''}
           </p>
         </div>
@@ -68,7 +72,9 @@ export function ProjectsClient({
           </button>
         )}
       </div>
+      </div>
 
+      <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 md:px-8 lg:px-10">
       {projects.length > 0 && (
         <div className="mb-6 flex items-center gap-3">
           <div className="relative max-w-sm flex-1">
@@ -143,7 +149,7 @@ export function ProjectsClient({
           </Link>
         </div>
       ) : (
-        <div className={view === 'grid' ? 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' : 'space-y-2'}>
+        <div className={view === 'grid' ? 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5' : 'space-y-2'}>
           {filtered.map((project) => (
             <Link
               key={project.id}
@@ -182,6 +188,7 @@ export function ProjectsClient({
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

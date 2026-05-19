@@ -5,21 +5,21 @@ import {
   type FeaturedTemplate,
 } from './explore-client';
 
-export const dynamic = 'force-dynamic';
+// Revalidate every 30s instead of rendering on every request. Explore is a
+// public listing where stale-for-30s is fine and the cached path renders in
+// single-digit ms vs ~hundreds for the cold-fetch path that was previously
+// running on every navigation.
+export const revalidate = 30;
 
-// Decide whether a template earns a spot in Explore. Two kinds qualify:
-//   1. Playable templates — `gameState` declares a winScore or winSurviveSec
-//      (the existing 2D Phaser games).
-//   2. Three.js *showcase* templates — `category === 'showcase'`. Visual-only
-//      Roblox-style 3D scenes you can pan around but can't yet play.
-// Pure scaffolds with no gameState and no showcase category (Empty Canvas,
-// the 3D Chess scaffold) stay out of Explore — they live only on Templates.
-function shouldShowInExplore(scene: unknown, category: string): boolean {
+function shouldShowInExplore(
+  gameState: { winScore?: number; winSurviveSec?: number } | null | undefined,
+  category: string,
+): boolean {
   if (category === 'showcase') return true;
-  const gameState = (scene as { gameState?: { winScore?: number; winSurviveSec?: number } } | null)
-    ?.gameState;
   if (!gameState) return false;
-  return Boolean((gameState.winScore ?? 0) > 0 || (gameState.winSurviveSec ?? 0) > 0);
+  return Boolean(
+    (gameState.winScore ?? 0) > 0 || (gameState.winSurviveSec ?? 0) > 0,
+  );
 }
 
 export default async function ExplorePage() {
@@ -28,15 +28,21 @@ export default async function ExplorePage() {
 
   try {
     const supabase = await createClient();
+    // Trim columns to what ExploreClient actually reads. Previously this
+    // fetched `scene` for both queries — `scene` is a large JSONB column and
+    // every template carries the full scene graph. We don't render scene
+    // contents in the explore cards, so we drop it from published_games
+    // entirely and read only the small `gameState` slice from templates via
+    // PostgREST's JSON-path syntax (kept as a JS-side filter input).
     const [gamesResult, templatesResult] = await Promise.all([
       supabase
         .from('published_games')
-        .select('id, slug, name, creator_name, scene, created_at')
+        .select('id, slug, name, creator_name, created_at')
         .order('created_at', { ascending: false })
         .limit(50),
       supabase
         .from('templates')
-        .select('id, name, description, category, scene, created_at')
+        .select('id, name, description, category, created_at, scene->gameState')
         .order('created_at', { ascending: false }),
     ]);
 
@@ -54,12 +60,12 @@ export default async function ExplorePage() {
         name: string;
         description: string;
         category: string;
-        scene: unknown;
         created_at: string;
+        gameState: { winScore?: number; winSurviveSec?: number } | null;
       }>) ?? [];
       templates = rows
-        .filter((row) => shouldShowInExplore(row.scene, row.category))
-        .map(({ scene: _scene, ...rest }) => rest);
+        .filter((row) => shouldShowInExplore(row.gameState, row.category))
+        .map(({ gameState: _gameState, ...rest }) => rest);
     }
   } catch (err) {
     console.error('[explore/page] fetch threw:', err);

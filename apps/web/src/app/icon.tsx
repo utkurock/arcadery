@@ -3,7 +3,8 @@ import { ImageResponse } from 'next/og';
 export const size = { width: 32, height: 32 };
 export const contentType = 'image/png';
 
-// "og" lockup matches the brand mark used across the site (memory: "Logo/favicon = og").
+// "AC" mark — matches the collapsed-sidebar lockup so the browser tab and the
+// in-app brand stay visually aligned.
 export default function Icon() {
   return new ImageResponse(
     (
@@ -16,14 +17,14 @@ export default function Icon() {
           justifyContent: 'center',
           background: 'linear-gradient(135deg, #8b7ec8 0%, #6b5fa8 100%)',
           color: '#ffffff',
-          fontSize: 22,
-          fontWeight: 700,
-          letterSpacing: -1,
+          fontSize: 18,
+          fontWeight: 800,
+          letterSpacing: -0.5,
           fontFamily: 'serif',
           borderRadius: 8,
         }}
       >
-        og
+        AC
       </div>
     ),
     size,
