@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { useEditorStore } from '@arcadery/editor';
+import { useEditorStore } from '@arcadery/editor/store';
 
 const GameCanvas = dynamic(
   () => import('@arcadery/engine').then((mod) => ({ default: mod.GameCanvas })),

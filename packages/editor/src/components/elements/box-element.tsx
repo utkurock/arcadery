@@ -4,6 +4,10 @@
 import { Edges } from '@react-three/drei';
 import { useEditorStore } from '../../stores/editor-store';
 
+// NOTE: transform.position/rotation/scale are applied by the outer <Selectable>
+// group (see selection-manager.tsx). This component renders at LOCAL origin so
+// the gizmo + drag math both operate on a single authoritative source.
+
 export function BoxElement({
   id,
   isSelected,
@@ -13,20 +17,14 @@ export function BoxElement({
   isSelected?: boolean;
   isHovered?: boolean;
 }) {
-  // Note: <Selectable> wrap is applied by scene-renderer.tsx via ELEMENT_REGISTRY routing — DO NOT import Selectable here.
   const element = useEditorStore((s) => s.scene.elements[id]);
   if (!element || element.type !== 'box') return null;
   if (!element.visible) return null;
-  const { transform, size, material } = element;
-  // Phase 8: ring color swap — selection wins, hover renders only when not selected.
+  const { size, material } = element;
   const ringColor = isSelected ? '#4f9eff' : 'rgba(255, 255, 255, 0.6)';
   const showRing = isSelected || isHovered;
   return (
-    <mesh
-      position={[transform.position.x, transform.position.y, transform.position.z]}
-      rotation={[transform.rotation.x, transform.rotation.y, transform.rotation.z]}
-      scale={[transform.scale.x, transform.scale.y, transform.scale.z]}
-    >
+    <mesh>
       <boxGeometry args={[size.x, size.y, size.z]} />
       <meshStandardMaterial
         color={material.color}

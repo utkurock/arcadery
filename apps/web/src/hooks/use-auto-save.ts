@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useEditorStore } from '@arcadery/editor';
+import { useEditorStore } from '@arcadery/editor/store';
 import { createClient } from '@/lib/supabase/client';
 
 type SaveStatus = 'saved' | 'saving' | 'error' | 'idle';

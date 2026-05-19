@@ -1,3 +1,4 @@
+import Image from 'next/image'
 import { Gamepad2, Layers, Users, DollarSign } from 'lucide-react'
 import { type ReactNode } from 'react'
 
@@ -40,12 +41,14 @@ export function Features({ dark = false }: FeaturesProps) {
                         <div className="relative mb-6 border-t border-dashed sm:mb-0" style={{ borderColor: dark ? 'rgba(255,255,255,0.1)' : '#e5e5e5' }}>
                             <div className={`absolute inset-0 ${dark ? '[background:radial-gradient(125%_125%_at_50%_0%,transparent_40%,rgba(30,30,40,0.8),rgb(10,10,15)_125%)]' : '[background:radial-gradient(125%_125%_at_50%_0%,transparent_40%,#f5f5f5,white_125%)]'}`} />
                             <div className="aspect-[76/59] overflow-hidden p-1 px-6">
-                                <img
+                                <Image
                                     src="/drift-racer.png"
                                     alt="AI game builder"
                                     className="h-full w-full rounded object-cover object-center scale-[2.2] origin-center"
-                                    width={2940}
-                                    height={1912}
+                                    width={1400}
+                                    height={910}
+                                    sizes="(max-width: 1024px) 90vw, 30rem"
+                                    loading="lazy"
                                 />
                             </div>
                         </div>
@@ -65,12 +68,14 @@ export function Features({ dark = false }: FeaturesProps) {
                             <div className="relative mb-6 sm:mb-0">
                                 <div className={`absolute -inset-6 ${dark ? '[background:radial-gradient(50%_50%_at_75%_50%,transparent,rgb(10,10,15)_100%)]' : '[background:radial-gradient(50%_50%_at_75%_50%,transparent,#f8f8fa_100%)]'}`} />
                                 <div className="aspect-[76/59] overflow-hidden border" style={{ borderColor: dark ? 'rgba(255,255,255,0.1)' : '#e5e5e5' }}>
-                                    <img
+                                    <Image
                                         src="/scene-editor.png"
                                         alt="Token Economy Editor"
                                         className="h-full w-full object-cover"
-                                        width={1598}
-                                        height={1420}
+                                        width={1200}
+                                        height={1066}
+                                        sizes="(max-width: 1024px) 90vw, 30rem"
+                                        loading="lazy"
                                     />
                                 </div>
                             </div>

@@ -205,6 +205,47 @@ export interface EditorState {
   marqueeRect: { x: number; y: number; w: number; h: number } | null;
   setMarqueeRect: (rect: { x: number; y: number; w: number; h: number } | null) => void;
 
+  // Drag-active transient slice. Set by <Selectable> when a click-drag is
+  // moving an element past the activation threshold; cleared on pointerup.
+  // Consumed by the snap-guides HUD (see snap-guides.tsx). Flat-root so it
+  // is excluded from undo history (partialize returns only `{ scene }`).
+  dragActive: { elementId: string; snapping: boolean } | null;
+  setDragActive: (state: { elementId: string; snapping: boolean } | null) => void;
+
+  // Pending drop from the DOM-side drop handler (editor-viewport.tsx). The
+  // drop handler can't raycast itself (it lives outside <Canvas>), so it
+  // queues the asset + screen-space cursor coords here. A small component
+  // inside <Canvas> drains the queue, raycasts to the drag plane, and
+  // places the new element at the resulting world position.
+  pendingAssetDrop: {
+    payload: {
+      id: string;
+      url: string;
+      name?: string;
+      type?: string;
+      aspectRatio?: number;
+      frameUrls?: string[];
+      frameRate?: number;
+      isModel: boolean;
+    };
+    screen: { x: number; y: number };
+  } | null;
+  setPendingAssetDrop: (
+    drop: {
+      payload: {
+        id: string;
+        url: string;
+        name?: string;
+        type?: string;
+        aspectRatio?: number;
+        frameUrls?: string[];
+        frameRate?: number;
+        isModel: boolean;
+      };
+      screen: { x: number; y: number };
+    } | null,
+  ) => void;
+
   // NEW (Phase 8 SELECT-05) — Atomic multi-element nudge.
   // ALL N selected element transforms mutate inside ONE set() call so zundo
   // records EXACTLY ONE history entry per arrow press, even with N>1 selected.

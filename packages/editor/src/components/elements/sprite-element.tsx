@@ -7,6 +7,15 @@ import { Billboard } from '@react-three/drei';
 import * as THREE from 'three';
 import { useEditorStore } from '../../stores/editor-store';
 
+// Transform applied by outer <Selectable>. The sprite mesh renders at local
+// origin. Billboard is now a pure rotation modifier — no position prop — so
+// the Selectable group's position controls placement and a single source of
+// truth feeds both the gizmo and click-drag math.
+//
+// Sprites use a shared THREE.Cache (enabled at editor mount in
+// stores/editor-store.ts so the same URL never decodes twice across multiple
+// instances).
+
 function StaticSprite({
   src,
   width,
@@ -125,7 +134,10 @@ function SpritePlane({
   isSelected?: boolean;
   isHovered?: boolean;
 }) {
-  const material = useMemo(() => {
+  // Apply sRGB + nearest filtering on the shared texture. Because
+  // useLoader+THREE.Cache returns the same Texture instance for repeat URLs,
+  // assigning these properties here is idempotent across all sprite usages.
+  const _material = useMemo(() => {
     if (texture) {
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.minFilter = THREE.NearestFilter;
@@ -133,9 +145,8 @@ function SpritePlane({
     }
     return null;
   }, [texture]);
-  void material;
+  void _material;
 
-  // Phase 8: ring color swap — selection wins, hover renders only when not selected.
   const showRing = isSelected || isHovered;
 
   return (
@@ -176,24 +187,10 @@ function SpriteInner({
   if (!element || element.type !== 'sprite') return null;
   if (!element.visible) return null;
 
-  const {
-    transform,
-    width,
-    height,
-    src,
-    tint,
-    frameUrls,
-    frameRate,
-    loopMode,
-    clips,
-    currentClip,
-  } = element;
+  const { width, height, src, tint, frameUrls, frameRate, loopMode, clips, currentClip } =
+    element;
 
-  // Clip-aware playback: when an active clip is named AND its definition
-  // exists on this sprite, prefer its frames/fps/loop over the top-level
-  // legacy fields. Falls back to the top-level fields when no clip is
-  // selected — preserves backwards compatibility with single-animation
-  // sprites that pre-date the clips[] system.
+  // Clip-aware playback (top-level fields are the legacy fallback).
   const activeClip = clips?.find((c) => c.name === currentClip) ?? null;
   const playFrameUrls = activeClip?.frameUrls ?? frameUrls;
   const playFrameRate = activeClip?.frameRate ?? frameRate ?? 8;
@@ -202,51 +199,41 @@ function SpriteInner({
   const isAnimated =
     Array.isArray(playFrameUrls) && playFrameUrls.length >= 2;
 
+  // Billboard at local origin — Selectable handles position. Children still
+  // face the camera, which is the canonical sprite behavior.
   return (
-    <Billboard
-      position={[transform.position.x, transform.position.y, transform.position.z]}
-    >
-      <group
-        rotation={[transform.rotation.x, transform.rotation.y, transform.rotation.z]}
-        scale={[transform.scale.x, transform.scale.y, transform.scale.z]}
-      >
-        {isAnimated ? (
-          <AnimatedSprite
-            // Keying on the active clip name forces a clean remount of
-            // <AnimatedSprite> whenever the user switches clips. Without this
-            // the internal frame index / timer would carry over between
-            // clips and you'd see a half-second of mismatched frames before
-            // it converges.
-            key={activeClip?.name ?? 'top-level'}
-            frameUrls={playFrameUrls!}
-            frameRate={playFrameRate}
-            loopMode={playLoopMode}
-            width={width}
-            height={height}
-            tint={tint}
-            isSelected={isSelected}
-            isHovered={isHovered}
-          />
-        ) : src ? (
-          <StaticSprite
-            src={src}
-            width={width}
-            height={height}
-            tint={tint}
-            isSelected={isSelected}
-            isHovered={isHovered}
-          />
-        ) : (
-          <SpritePlane
-            texture={null}
-            width={width}
-            height={height}
-            tint={tint ?? '#888888'}
-            isSelected={isSelected}
-            isHovered={isHovered}
-          />
-        )}
-      </group>
+    <Billboard>
+      {isAnimated ? (
+        <AnimatedSprite
+          key={activeClip?.name ?? 'top-level'}
+          frameUrls={playFrameUrls!}
+          frameRate={playFrameRate}
+          loopMode={playLoopMode}
+          width={width}
+          height={height}
+          tint={tint}
+          isSelected={isSelected}
+          isHovered={isHovered}
+        />
+      ) : src ? (
+        <StaticSprite
+          src={src}
+          width={width}
+          height={height}
+          tint={tint}
+          isSelected={isSelected}
+          isHovered={isHovered}
+        />
+      ) : (
+        <SpritePlane
+          texture={null}
+          width={width}
+          height={height}
+          tint={tint ?? '#888888'}
+          isSelected={isSelected}
+          isHovered={isHovered}
+        />
+      )}
     </Billboard>
   );
 }
@@ -260,7 +247,6 @@ export function SpriteElement({
   isSelected?: boolean;
   isHovered?: boolean;
 }) {
-  // Note: <Selectable> wrap is applied by scene-renderer.tsx via ELEMENT_REGISTRY routing — DO NOT import Selectable here.
   return (
     <Suspense fallback={null}>
       <SpriteInner id={id} isSelected={isSelected} isHovered={isHovered} />

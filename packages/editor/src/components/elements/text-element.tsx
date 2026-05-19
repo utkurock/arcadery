@@ -6,6 +6,9 @@ import { Text, Html } from '@react-three/drei';
 import type { ThreeEvent } from '@react-three/fiber';
 import { useEditorStore } from '../../stores/editor-store';
 
+// Transform applied by outer <Selectable>. Inner group renders at local
+// origin so the troika Text + raycast proxy align with the gizmo.
+
 export function TextElement({
   id,
   isSelected,
@@ -15,16 +18,11 @@ export function TextElement({
   isSelected?: boolean;
   isHovered?: boolean;
 }) {
-  // Note: <Selectable> wrap is applied by scene-renderer.tsx via ELEMENT_REGISTRY routing — DO NOT import Selectable here.
   const element = useEditorStore((s) => s.scene.elements[id]);
   const mode = useEditorStore((s) => s.mode);
   const [isEditing, setIsEditing] = useState(false);
 
-  // Phase 8 (SELECT-01): troika Text bbox for invisible raycast proxy.
-  // troika exposes geometry.boundingBox AFTER sync() fires. Initialize with a
-  // heuristic (fontSize × content.length × 0.5) so the proxy exists immediately;
-  // sync() refines once the text glyphs lay out. Per UI-SPEC line 144-145.
-  // Refs hold the troika Text mesh so we can read the bbox post-sync.
+  // troika Text bbox for invisible raycast proxy.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const textRef = useRef<any>(null);
   const [bbox, setBbox] = useState<{ w: number; h: number }>({ w: 1, h: 1 });
@@ -40,8 +38,6 @@ export function TextElement({
     setIsEditing(false);
   }, [id]);
 
-  // Recompute heuristic bbox whenever content / fontSize change. troika may
-  // refine via sync() after the next paint; that's a best-effort improvement.
   const content = element?.type === 'text' ? element.content : '';
   const fontSize = element?.type === 'text' ? element.fontSize : 1;
   useEffect(() => {
@@ -49,7 +45,6 @@ export function TextElement({
       w: Math.max(0.5, fontSize * Math.max(1, content.length) * 0.5),
       h: Math.max(0.5, fontSize * 1.2),
     });
-    // Best-effort: ask troika to sync and read geometry.boundingBox if available.
     const t = textRef.current;
     if (t?.sync) {
       t.sync(() => {
@@ -67,17 +62,12 @@ export function TextElement({
   if (!element || element.type !== 'text') return null;
   if (!element.visible) return null;
 
-  const { transform, color, font } = element;
+  const { color, font } = element;
   const ringColor = isSelected ? '#4f9eff' : 'rgba(255, 255, 255, 0.6)';
   const showRing = isSelected || isHovered;
 
   return (
-    <group
-      position={[transform.position.x, transform.position.y, transform.position.z]}
-      rotation={[transform.rotation.x, transform.rotation.y, transform.rotation.z]}
-      scale={[transform.scale.x, transform.scale.y, transform.scale.z]}
-      onDoubleClick={handleDoubleClick}
-    >
+    <group onDoubleClick={handleDoubleClick}>
       <Text
         ref={textRef}
         fontSize={fontSize}
@@ -87,14 +77,10 @@ export function TextElement({
         anchorY="middle"
       >
         {content}
-        {showRing && (
-          <meshBasicMaterial color={ringColor} wireframe />
-        )}
+        {showRing && <meshBasicMaterial color={ringColor} wireframe />}
       </Text>
 
-      {/* Phase 8 (SELECT-01): invisible raycast proxy sized to troika bbox + 0.25 wu pad.
-          UI-SPEC line 144 locks this. Raycast is default Mesh behavior (visible={false}
-          does NOT disable raycast — Assumption A1 confirmed in Wave 0). */}
+      {/* invisible raycast proxy sized to troika bbox + 0.25 wu pad. */}
       <mesh visible={false}>
         <boxGeometry args={[bbox.w + 0.25, bbox.h + 0.25, 0.1]} />
       </mesh>

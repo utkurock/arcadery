@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -479,12 +480,18 @@ export default function Main2Page() {
 
             {/* Center mockup */}
             <div className="order-1 w-full max-w-lg flex-shrink-0 lg:order-2">
-              <img
+              {/* next/image: served at request-resolved sizes via the
+                  optimizer (auto webp, lazy by default). The source file
+                  has been pre-shrunk to ≤1800px wide so cold-cache
+                  optimization passes finish in single-digit ms. */}
+              <Image
                 src="/macbook.png"
                 alt="Arcadery editor preview"
-                className="w-full"
-                width={5207}
-                height={2814}
+                className="w-full h-auto"
+                width={1800}
+                height={973}
+                priority
+                sizes="(max-width: 1024px) 90vw, 32rem"
               />
             </div>
 

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { temporal } from 'zundo';
+import * as THREE from 'three';
 import {
   createEmptyScene,
   createSpriteElement,
@@ -8,6 +9,12 @@ import {
   DEFAULT_ECONOMY,
 } from '@arcadery/shared';
 import type { EditorState } from './types';
+
+// Enable Three's built-in URL → resource cache. Repeated useLoader calls for
+// the same texture/model URL (e.g. when the same asset appears in 50 sprite
+// elements) reuse one decoded instance instead of re-fetching/decoding per
+// element. Idempotent — safe to set unconditionally at module load.
+THREE.Cache.enabled = true;
 
 export const useEditorStore = create<EditorState>()(
   temporal(
@@ -22,7 +29,10 @@ export const useEditorStore = create<EditorState>()(
       // handles, like Figma's V tool. Users switch to Move/Rotate/Scale when
       // they want axis-locked precision.
       transformMode: 'select' as const,
-      viewMode: '3d' as const,
+      // Default to 2D ortho. Canva-style projects want X/Y screen-plane
+      // movement out of the box; users who genuinely need a 3D scene can
+      // toggle via the camera button in the toolbar.
+      viewMode: '2d' as const,
 
       addElement: (element) => {
         set((state) => {
@@ -256,6 +266,22 @@ export const useEditorStore = create<EditorState>()(
       clearPendingDrop: () => {
         set((state) => {
           state.pendingDrop = null;
+        });
+      },
+
+      // Drag-active slice (consumed by snap-guides HUD).
+      dragActive: null,
+      setDragActive: (next) => {
+        set((state) => {
+          state.dragActive = next;
+        });
+      },
+
+      // Pending asset drop (DOM-side handler → in-Canvas raycast helper).
+      pendingAssetDrop: null,
+      setPendingAssetDrop: (drop) => {
+        set((state) => {
+          state.pendingAssetDrop = drop;
         });
       },
 

@@ -5,7 +5,11 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { GitFork, Trophy, X, Heart, Coins } from 'lucide-react';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { useEditorStore } from '@arcadery/editor';
+// Pulling JUST the zustand store via the sub-export keeps the heavy editor
+// chrome (EditorShell, AssetLibrary, etc) out of the /play/[slug] bundle.
+// The viewport components (GameCanvas, ReadOnlySceneRenderer) are loaded
+// dynamically below where they're actually rendered.
+import { useEditorStore } from '@arcadery/editor/store';
 import { isWalletConnectEnabled } from '@arcadery/shared';
 import type { RuntimeState } from '@arcadery/engine';
 import { createClient } from '@/lib/supabase/client';

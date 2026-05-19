@@ -11,6 +11,8 @@ import { TransformControlsWrapper } from './transform-controls-wrapper';
 import { MarqueeR3F } from './marquee-r3f';
 import { MarqueeDom } from './marquee-dom';
 import { SelectionHud } from './selection-hud';
+import { SnapGuides } from './snap-guides';
+import { AssetDropHandler } from './asset-drop-handler';
 import { useEditorStore } from '../stores/editor-store';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -122,23 +124,31 @@ export function EditorViewport() {
               frame_size?: { w: number; h: number };
             } | null;
           };
-          const store = useEditorStore.getState();
-          if (a.type.startsWith('model/') || a.frameMetadata?.mode === 'model') {
-            store.addModelFromAsset({ id: a.id, url: a.url, name: a.name ?? 'Model' });
-          } else {
-            const aspect = a.frameMetadata?.frame_size
-              ? a.frameMetadata.frame_size.w / a.frameMetadata.frame_size.h
-              : 1;
-            store.addSpriteFromAsset({
+          // Queue the drop for the in-Canvas <AssetDropHandler> to consume.
+          // It owns the camera/raycaster, so it can place the new element at
+          // the cursor's world position (not the scene center).
+          const isModel =
+            a.type.startsWith('model/') || a.frameMetadata?.mode === 'model';
+          const aspect = a.frameMetadata?.frame_size
+            ? a.frameMetadata.frame_size.w / a.frameMetadata.frame_size.h
+            : 1;
+          useEditorStore.getState().setPendingAssetDrop({
+            payload: {
               id: a.id,
               url: a.url,
-              name: a.name ?? 'Sprite',
+              name: a.name,
+              type: a.type,
               aspectRatio: aspect,
+              isModel,
               ...(a.frameMetadata?.mode === 'animation' && a.frameMetadata.frame_urls
-                ? { frameUrls: a.frameMetadata.frame_urls, frameRate: a.frameMetadata.fps ?? 8 }
+                ? {
+                    frameUrls: a.frameMetadata.frame_urls,
+                    frameRate: a.frameMetadata.fps ?? 8,
+                  }
                 : {}),
-            });
-          }
+            },
+            screen: { x: e.clientX, y: e.clientY },
+          });
         } catch {}
       }}
     >
@@ -151,6 +161,12 @@ export function EditorViewport() {
         {isEditMode && <TransformControlsWrapper />}
         {/* B5 fix: MarqueeR3F mounts INSIDE Canvas (uses useThree); returns null. */}
         {isEditMode && <MarqueeR3F />}
+        {/* Snap modifier feedback + DOM-drop → world-position placement.
+            Both live inside the Canvas because they need camera/raycaster
+            access; both early-return when not active so the runtime cost is
+            ~zero outside their gestures. */}
+        {isEditMode && <SnapGuides />}
+        {isEditMode && <AssetDropHandler />}
       </GameCanvas>
       {/* B5 fix: MarqueeDom mounts OUTSIDE Canvas as a sibling div.
           Pointer handlers + brand-purple rectangle live here. */}
