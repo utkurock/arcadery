@@ -418,13 +418,8 @@ function LoadingBubble({ msg }: { msg: ChatMessage }) {
         </div>
         <span className="text-[10px] font-semibold text-white/40">Game Assistant</span>
       </div>
-      <div className="ml-6 flex items-center gap-2">
+      <div className="ml-6">
         <p className="text-sm text-white/50">{msg.content}</p>
-        <span className="flex gap-0.5">
-          <span className="w-1.5 h-1.5 bg-[#8b7ec8] rounded-full animate-pulse" />
-          <span className="w-1.5 h-1.5 bg-[#8b7ec8] rounded-full animate-pulse [animation-delay:0.2s]" />
-          <span className="w-1.5 h-1.5 bg-[#8b7ec8] rounded-full animate-pulse [animation-delay:0.4s]" />
-        </span>
       </div>
     </div>
   );

@@ -44,8 +44,7 @@ export function VoxelHeistIntro({ onEntered }: Props) {
       </div>
 
       {/* Top-left "clock" mood strip */}
-      <div className="pointer-events-none absolute top-3 left-3 z-20 font-mono text-[10px] uppercase tracking-[0.3em] text-amber-300/70 flex items-center gap-2">
-        <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-300 animate-pulse" />
+      <div className="pointer-events-none absolute top-3 left-3 z-20 font-mono text-[10px] uppercase tracking-[0.3em] text-amber-300/70">
         Alarm armed · 60s
       </div>
 

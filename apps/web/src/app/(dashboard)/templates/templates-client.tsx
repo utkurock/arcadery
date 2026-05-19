@@ -22,6 +22,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useViewer } from '@/lib/auth/use-viewer';
 import { useModals } from '@/lib/ui/modals';
+import { ChatTrigger } from '@/components/chat/chat-trigger';
 
 export interface Template {
   id: string;
@@ -272,14 +273,17 @@ export function TemplatesClient({ templates }: { templates: Template[] }) {
               Drop into a playable game, or remix a 3D showcase into your own.
             </p>
           </div>
-          <div className="relative w-full sm:w-56">
-            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/25" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search templates..."
-              className="w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-8 pr-3 text-xs text-white/80 placeholder:text-white/25 outline-none transition-colors focus:border-[#8b7ec8]/40"
-            />
+          <div className="flex w-full items-center gap-2 sm:w-auto">
+            <div className="relative w-full sm:w-56">
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/25" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search templates..."
+                className="w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-8 pr-3 text-xs text-white/80 placeholder:text-white/25 outline-none transition-colors focus:border-[#8b7ec8]/40"
+              />
+            </div>
+            <ChatTrigger />
           </div>
         </div>
       </div>

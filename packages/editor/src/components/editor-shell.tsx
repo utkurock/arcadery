@@ -490,7 +490,6 @@ function TopBar({
       <div className="flex items-center gap-3">
         {saveStatus === 'saving' && (
           <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
             <span className="text-xs text-white/40">Saving...</span>
           </div>
         )}

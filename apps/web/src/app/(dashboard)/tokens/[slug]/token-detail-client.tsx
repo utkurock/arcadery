@@ -151,7 +151,7 @@ export function TokenDetailClient({ token }: { token: LiveToken }) {
                 </span>
                 {token.alive ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
-                    <Radio size={9} className="animate-pulse" />
+                    <Radio size={9} />
                     Live
                   </span>
                 ) : (

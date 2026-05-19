@@ -20,6 +20,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { LiveToken } from '@/lib/tokens/devnet-loader';
+import { ChatTrigger } from '@/components/chat/chat-trigger';
 
 interface CategoryMeta {
   icon: LucideIcon;
@@ -124,7 +125,7 @@ export function TokensClient({ liveTokens }: { liveTokens: LiveToken[] }) {
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-semibold text-white">Game Tokens</h1>
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/12 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
-                <Radio size={9} className="animate-pulse" />
+                <Radio size={9} />
                 Live · devnet
               </span>
             </div>
@@ -132,14 +133,17 @@ export function TokensClient({ liveTokens }: { liveTokens: LiveToken[] }) {
               Every game mints its own SPL token through a Meteora bonding curve.
             </p>
           </div>
-          <div className="relative w-full sm:w-56">
-            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/25" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search tokens..."
-              className="w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-8 pr-3 text-xs text-white/80 placeholder:text-white/25 outline-none transition-colors focus:border-[#8b7ec8]/40"
-            />
+          <div className="flex w-full items-center gap-2 sm:w-auto">
+            <div className="relative w-full sm:w-56">
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/25" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search tokens..."
+                className="w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-8 pr-3 text-xs text-white/80 placeholder:text-white/25 outline-none transition-colors focus:border-[#8b7ec8]/40"
+              />
+            </div>
+            <ChatTrigger />
           </div>
         </div>
       </div>

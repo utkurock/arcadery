@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Plus, Clock, Search, LayoutGrid, List, FolderOpen } from 'lucide-react';
 import { useModals } from '@/lib/ui/modals';
+import { ChatTrigger } from '@/components/chat/chat-trigger';
 
 export interface Project {
   id: string;
@@ -114,6 +115,7 @@ export function ProjectsClient({
               <List className="h-4 w-4" />
             </button>
           </div>
+          <ChatTrigger />
         </div>
       )}
 

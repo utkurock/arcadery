@@ -44,8 +44,7 @@ export function NeonAsteroidsIntro({ onEntered }: Props) {
         />
       </div>
 
-      <div className="pointer-events-none absolute top-3 left-3 z-20 font-mono text-[10px] uppercase tracking-[0.3em] text-cyan-300/70 flex items-center gap-2">
-        <span className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
+      <div className="pointer-events-none absolute top-3 left-3 z-20 font-mono text-[10px] uppercase tracking-[0.3em] text-cyan-300/70">
         Hangar · prep
       </div>
 
