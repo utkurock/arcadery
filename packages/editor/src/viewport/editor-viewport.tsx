@@ -21,6 +21,26 @@ const PhaserCanvas = dynamic(
   { ssr: false },
 );
 
+const PlayCanvas3D = dynamic(
+  () => import('@arcadery/engine').then((mod) => ({ default: mod.PlayCanvas3D })),
+  { ssr: false },
+);
+
+/** True when a "three" scene carries a 3D-capable controller, so test-play
+ *  should run the live 3D runtime instead of the static editor viewport. */
+function has3DController(scene: { elements?: Record<string, { behaviors?: Array<{ type: string }> }> }): boolean {
+  for (const el of Object.values(scene.elements ?? {})) {
+    if (
+      el.behaviors?.some(
+        (b) => b.type === 'third-person-controller' || b.type === 'top-down-controller',
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function EditorViewport() {
   const mode = useEditorStore((s) => s.mode);
   const viewMode = useEditorStore((s) => s.viewMode);
@@ -84,6 +104,20 @@ export function EditorViewport() {
         {isPlayMode && runtimeState && (
           <PlayHud state={runtimeState} />
         )}
+      </div>
+    );
+  }
+
+  // 3D test-play: run the live runtime + HUD instead of the static viewport.
+  if (isPlayMode && has3DController(scene)) {
+    return (
+      <div className="w-full h-full relative">
+        <PlayCanvas3D
+          scene={scene}
+          backgroundColor={backgroundColor}
+          onGameStateChange={setRuntimeState}
+        />
+        {runtimeState && <PlayHud state={runtimeState} />}
       </div>
     );
   }

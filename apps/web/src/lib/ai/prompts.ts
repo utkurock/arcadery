@@ -62,6 +62,11 @@ Behaviors (attach via "behaviors" array on the element):
   • { type:"top-down-controller", speed:5, controls:"both" }
     → 1 player only. 8-directional WASD/arrows movement.
 
+  • { type:"third-person-controller", speed:6, jumpVelocity:10, gravity:24, controls:"both", groundTag:"solid", cameraDistance:10, cameraHeight:6 }
+    → 1 player only, FOR 3D ("three") SCENES. WASD moves on the ground plane
+       (W = into the screen), space jumps, gravity pulls down. A chase camera
+       follows the player automatically — no mouse-look needed.
+
   • { type:"auto-move", velocityX:2, velocityY:0, reverseOnHit:true }
     → enemies that patrol. Use reverseOnHit:true for back-and-forth.
 
@@ -128,8 +133,28 @@ ${buildAssetPromptSummary()}
 Desert shooter tile indexes (18×13 spritesheet):
 - Ground/sand 0-17, stone/rock 18-35, walls 36-71, decorations 72-150, props 151-233.
 
-For "three" 3D: use box/sphere/plane/light. Behaviors NOT yet supported in
-3D mode — keep it static or as a showcase scene; gameState should be omitted.
+STEP 6 — "three" 3D PLAYABLE SCENES:
+
+3D games are NOW FULLY PLAYABLE. Build a real game, not a static showcase.
+Use box/sphere/plane/model/light.
+- Coordinates are WORLD UNITS (not pixels), y-up. Keep positions in a ±50 range.
+- Floor: a wide thin box, e.g. size {x:40,y:1,z:40} at y=-0.5, tagged ["solid"]
+  with behavior {type:"solid",surfaceTag:"solid"}. The player starts just above it.
+- Player: a box ~1×1×1 tagged ["player"] with a third-person-controller.
+- Pickups: spheres (radius ~0.5) tagged ["pickup"] with pickup-on-contact
+  (collectorTag:"player"), floating at y≈1.
+- Enemies: boxes/spheres tagged ["enemy"] with auto-move (use velocityX and/or
+  velocityZ for ground patrol; keep velocityY:0) + damage-on-contact (victimTag:"player").
+- Win condition: winScore (sum of all pickup scoreDeltas) OR winSurviveSec OR a
+  win-on-tag-destroyed behavior.
+- ALWAYS set gameState with cameraFollowId = the player's element id.
+
+3D numbers: speed 3-10; jumpVelocity 8-14; gravity 18-30; positions ±50;
+pickup radius 0.3-0.8; floor 30-60 wide.
+
+Supported behaviors in 3D: third-person-controller, top-down-controller,
+auto-move, solid, pickup-on-contact, damage-on-contact, win-on-tag-destroyed.
+(shoot-projectile + spawner are 2D-only for now — don't use them in "three" scenes.)
 
 EXAMPLE 1 — "make a platformer where I collect coins":
 {
@@ -237,9 +262,64 @@ EXAMPLE 2 — "top-down shooter where I shoot enemies":
   "gameState": {"initialScore":0,"initialHealth":3,"winScore":0,"winSurviveSec":0,"cameraFollowId":"player"}
 }
 
+EXAMPLE 3 — "a 3D game where I run around and collect gems" (renderEngine "three"):
+{
+  "renderEngine": "three",
+  "description": "A 3D arena: run and jump with WASD + space to collect 3 floating gems while a roaming enemy patrols. Collect them all to win.",
+  "elements": [
+    {
+      "id": "floor", "name": "Floor", "type": "box",
+      "transform": {"position":{"x":0,"y":-0.5,"z":0},"rotation":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}},
+      "size": {"x":40,"y":1,"z":40}, "material": {"color":"#2b3245","opacity":1},
+      "tags": ["solid"], "behaviors": [{"type":"solid","surfaceTag":"solid"}]
+    },
+    {
+      "id": "player", "name": "Player", "type": "box",
+      "transform": {"position":{"x":0,"y":1,"z":0},"rotation":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}},
+      "size": {"x":1,"y":1,"z":1}, "material": {"color":"#5db8a8","opacity":1},
+      "tags": ["player"],
+      "behaviors": [{"type":"third-person-controller","speed":6,"jumpVelocity":10,"gravity":24,"controls":"both","groundTag":"solid","cameraDistance":10,"cameraHeight":6}]
+    },
+    {
+      "id": "gem1", "name": "Gem", "type": "sphere",
+      "transform": {"position":{"x":8,"y":1,"z":-8},"rotation":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}},
+      "radius": 0.5, "material": {"color":"#a78bfa","opacity":1},
+      "tags": ["pickup"],
+      "behaviors": [{"type":"pickup-on-contact","collectorTag":"player","scoreDelta":20,"healthDelta":0,"destroyOnPickup":true}]
+    },
+    {
+      "id": "gem2", "name": "Gem", "type": "sphere",
+      "transform": {"position":{"x":-7,"y":1,"z":7},"rotation":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}},
+      "radius": 0.5, "material": {"color":"#a78bfa","opacity":1},
+      "tags": ["pickup"],
+      "behaviors": [{"type":"pickup-on-contact","collectorTag":"player","scoreDelta":20,"healthDelta":0,"destroyOnPickup":true}]
+    },
+    {
+      "id": "gem3", "name": "Gem", "type": "sphere",
+      "transform": {"position":{"x":10,"y":1,"z":6},"rotation":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}},
+      "radius": 0.5, "material": {"color":"#a78bfa","opacity":1},
+      "tags": ["pickup"],
+      "behaviors": [{"type":"pickup-on-contact","collectorTag":"player","scoreDelta":20,"healthDelta":0,"destroyOnPickup":true}]
+    },
+    {
+      "id": "enemy", "name": "Enemy", "type": "box",
+      "transform": {"position":{"x":-10,"y":1,"z":0},"rotation":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}},
+      "size": {"x":1.2,"y":1.2,"z":1.2}, "material": {"color":"#ef4444","opacity":1},
+      "tags": ["enemy"],
+      "behaviors": [
+        {"type":"auto-move","velocityX":0,"velocityY":0,"velocityZ":3,"reverseOnHit":true},
+        {"type":"damage-on-contact","victimTag":"player","damage":1,"destroySelfOnHit":false,"cooldownMs":900}
+      ]
+    }
+  ],
+  "gameState": {"initialScore":0,"initialHealth":3,"winScore":60,"winSurviveSec":0,"cameraFollowId":"player"}
+}
+
 When the user's prompt closely matches one of these archetypes, follow the
 shape of the matching example. For novel ideas, mix the components — but
-ALWAYS produce a player + at least one solid + a win condition.`;
+ALWAYS produce a player + at least one solid + a win condition. For 3D
+("three") games, ALWAYS use third-person-controller, a solid floor, and
+gameState.cameraFollowId — never emit a static 3D scene.`;
 
 // ---------------------------------------------------------------------------
 // User prompt builder

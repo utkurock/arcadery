@@ -56,6 +56,11 @@ const PhaserCanvas = dynamic(
   { ssr: false },
 );
 
+const PlayCanvas3D = dynamic(
+  () => import('@arcadery/engine').then((mod) => ({ default: mod.PlayCanvas3D })),
+  { ssr: false },
+);
+
 interface PlayGame {
   id: string;
   slug: string;
@@ -75,8 +80,28 @@ function detectControllerKind(scene: any): 'platformer' | 'top-down' {
     if (!behaviors) continue;
     if (behaviors.some((b) => b.type === 'top-down-controller')) return 'top-down';
     if (behaviors.some((b) => b.type === 'platformer-controller')) return 'platformer';
+    // Third-person uses dpad + jump, same touch layout as platformer.
+    if (behaviors.some((b) => b.type === 'third-person-controller')) return 'platformer';
   }
   return 'platformer';
+}
+
+/** A "three" scene is playable in 3D when it has a game-state config and an
+ *  element carrying a 3D-capable controller (third-person or top-down). */
+function has3DController(scene: any): boolean {
+  if (!scene?.elements) return false;
+  for (const el of Object.values(scene.elements) as any[]) {
+    const behaviors = el?.behaviors as Array<{ type: string }> | undefined;
+    if (!behaviors) continue;
+    if (
+      behaviors.some(
+        (b) => b.type === 'third-person-controller' || b.type === 'top-down-controller',
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 interface LeaderboardEntry {
@@ -102,6 +127,11 @@ export function PlayClient({ game, isOwner = false }: { game: PlayGame; isOwner?
   // and could fire an unwanted Phantom popup mid-restart.
   const [runId, setRunId] = useState(0);
   const isPlayable = Boolean(game.scene?.gameState);
+  // A 3D scene that should run the live runtime (not just the static viewer).
+  const is3DPlayable =
+    game.scene?.settings?.renderEngine !== 'phaser' &&
+    isPlayable &&
+    has3DController(game.scene);
 
   // ── Fly Birds pay-to-play layer ────────────────────────────────────────────
   // Only the official Fly Birds template runs the entry-gate / prize-pool
@@ -427,6 +457,13 @@ export function PlayClient({ game, isOwner = false }: { game: PlayGame; isOwner?
           backgroundColor={game.scene.settings?.backgroundColor || '#17181e'}
           isEditMode={false}
           scene={game.scene}
+          onGameStateChange={setRuntimeState}
+        />
+      ) : is3DPlayable ? (
+        <PlayCanvas3D
+          key={runId}
+          scene={game.scene}
+          backgroundColor={game.scene.settings?.backgroundColor || '#0b0c14'}
           onGameStateChange={setRuntimeState}
         />
       ) : (

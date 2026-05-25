@@ -30,12 +30,34 @@ export const TopDownControllerSchema = z.object({
   controls: z.enum(['wasd', 'arrows', 'both']).default('both'),
 });
 
+/**
+ * Third-person 3D controller — the playable controller for "three" scenes.
+ * WASD/arrows move the player on the world XZ plane (W = into the screen),
+ * space jumps, gravity pulls -Y. The play camera follows from a fixed offset
+ * behind + above the player, so movement stays readable without mouse-look.
+ */
+export const ThirdPersonControllerSchema = z.object({
+  type: z.literal('third-person-controller'),
+  speed: z.number().min(0.1).max(50).default(6),
+  jumpVelocity: z.number().min(0).max(50).default(10),
+  gravity: z.number().min(0).max(200).default(24),
+  controls: z.enum(['wasd', 'arrows', 'both']).default('both'),
+  /** Tag treated as ground for jump-reset / landing. Defaults to "solid". */
+  groundTag: z.string().default('solid'),
+  /** Camera distance behind the player (world units). */
+  cameraDistance: z.number().min(1).max(50).default(10),
+  /** Camera height above the player (world units). */
+  cameraHeight: z.number().min(0).max(50).default(6),
+});
+
 // ─── Movement behaviors ──────────────────────────────────────────────────
 
 export const AutoMoveSchema = z.object({
   type: z.literal('auto-move'),
   velocityX: z.number().default(0),
   velocityY: z.number().default(0),
+  /** 3D depth-axis velocity. Ignored by the 2D runtime; used by 3D patrols. */
+  velocityZ: z.number().default(0),
   /** When true, reverses velocityX on horizontal collision (patrol enemy). */
   reverseOnHit: z.boolean().default(false),
 });
@@ -124,6 +146,7 @@ export const WinOnTagDestroyedSchema = z.object({
 export const BehaviorSchema = z.discriminatedUnion('type', [
   PlatformerControllerSchema,
   TopDownControllerSchema,
+  ThirdPersonControllerSchema,
   AutoMoveSchema,
   SolidSchema,
   PickupOnContactSchema,
