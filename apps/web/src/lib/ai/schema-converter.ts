@@ -1,5 +1,5 @@
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { SceneElementSchema, GameStateConfigSchema } from '@arcadery/shared/schemas';
+import { SceneElementSchema, GameStateConfigSchema, IntroConfigSchema } from '@arcadery/shared/schemas';
 import { z } from 'zod';
 
 /**
@@ -34,6 +34,9 @@ export const GenerateSceneResponseSchema = z.object({
     .describe('1-2 sentence description of the generated scene'),
   gameState: GameStateConfigSchema.optional().describe(
     'When set, the scene becomes a playable game: initial score/health, win condition, camera follow target',
+  ),
+  intro: IntroConfigSchema.optional().describe(
+    'Themed entry/splash screen shown before play: theme, title, subtitle, ctaLabel',
   ),
 });
 

@@ -16,6 +16,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useModals } from '@/lib/ui/modals';
 import { TokenSection } from '@/components/tokens/token-section';
 import { TouchControls } from '@/components/play/touch-controls';
+import { GameIntroScreen } from '@/components/play/game-intro-screen';
 import { FlyBirdsEntryGate } from '@/components/play/fly-birds-entry-gate';
 import { FlyBirdsClaimScreen } from '@/components/play/fly-birds-claim-screen';
 import { AnalyticsBeacon, fireGameEvent } from '@/components/play/analytics-beacon';
@@ -132,6 +133,15 @@ export function PlayClient({ game, isOwner = false }: { game: PlayGame; isOwner?
     game.scene?.settings?.renderEngine !== 'phaser' &&
     isPlayable &&
     has3DController(game.scene);
+
+  // Roblox-style intro gate. The game canvas only mounts after "Play" so the
+  // runtime doesn't tick behind the splash. Fly Birds keeps its own paid
+  // entry gate; an intro explicitly disabled in the scene is skipped.
+  const introEnabled = game.scene?.intro?.enabled !== false;
+  const isFlyBirdsGame = game.slug === FLY_BIRDS_SLUG;
+  const [started, setStarted] = useState(false);
+  const showIntro = !isFlyBirdsGame && introEnabled && !started;
+  const canvasMounted = isFlyBirdsGame || !introEnabled || started;
 
   // ── Fly Birds pay-to-play layer ────────────────────────────────────────────
   // Only the official Fly Birds template runs the entry-gate / prize-pool
@@ -450,26 +460,37 @@ export function PlayClient({ game, isOwner = false }: { game: PlayGame; isOwner?
       {/* Game canvas. `key={runId}` makes "Play again" a cheap full remount
           of just the canvas instead of a window.location.reload() that also
           churns the wallet adapter and triggers a stray Phantom popup. */}
-      {game.scene?.settings?.renderEngine === 'phaser' ? (
-        <PhaserCanvas
-          key={runId}
-          elements={game.scene.elements || {}}
-          backgroundColor={game.scene.settings?.backgroundColor || '#17181e'}
-          isEditMode={false}
-          scene={game.scene}
-          onGameStateChange={setRuntimeState}
+      {canvasMounted &&
+        (game.scene?.settings?.renderEngine === 'phaser' ? (
+          <PhaserCanvas
+            key={runId}
+            elements={game.scene.elements || {}}
+            backgroundColor={game.scene.settings?.backgroundColor || '#17181e'}
+            isEditMode={false}
+            scene={game.scene}
+            onGameStateChange={setRuntimeState}
+          />
+        ) : is3DPlayable ? (
+          <PlayCanvas3D
+            key={runId}
+            scene={game.scene}
+            backgroundColor={game.scene.settings?.backgroundColor || '#0b0c14'}
+            onGameStateChange={setRuntimeState}
+          />
+        ) : (
+          <GameCanvas key={runId} cameraType="3d" showGrid={false} backgroundColor="#17181e">
+            <ReadOnlySceneRenderer />
+          </GameCanvas>
+        ))}
+
+      {/* Roblox-style entry splash — shown until the player hits Play. */}
+      {showIntro && (
+        <GameIntroScreen
+          intro={game.scene?.intro}
+          gameName={game.name}
+          creatorName={game.creator_name}
+          onPlay={() => setStarted(true)}
         />
-      ) : is3DPlayable ? (
-        <PlayCanvas3D
-          key={runId}
-          scene={game.scene}
-          backgroundColor={game.scene.settings?.backgroundColor || '#0b0c14'}
-          onGameStateChange={setRuntimeState}
-        />
-      ) : (
-        <GameCanvas key={runId} cameraType="3d" showGrid={false} backgroundColor="#17181e">
-          <ReadOnlySceneRenderer />
-        </GameCanvas>
       )}
 
       {/* Touch controls — auto-shown on touch devices, infers controller kind from elements */}

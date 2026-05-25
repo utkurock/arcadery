@@ -187,6 +187,12 @@ export const useEditorStore = create<EditorState>()(
         });
       },
 
+      setIntro: (config) => {
+        set((state) => {
+          state.scene.intro = config;
+        });
+      },
+
       updateSceneSettings: (patch) => {
         set((state) => {
           Object.assign(state.scene.settings, patch);

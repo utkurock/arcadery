@@ -49,6 +49,29 @@ export const SceneSettingsSchema = z.object({
 
 export type SceneSettings = z.infer<typeof SceneSettingsSchema>;
 
+// ─── Intro / entry screen ──────────────────────────────────────────────────
+// A game is wrapped as: themed INTRO page → playable scene → themed END page.
+// The intro is a config-driven presentation screen (Roblox-style splash) shown
+// before play; `theme` selects one of the built-in visual presets.
+export const INTRO_THEMES = ['arcade-neon', 'sunset-pop', 'pixel-retro', 'clean-mint'] as const;
+export type IntroTheme = (typeof INTRO_THEMES)[number];
+
+export const IntroConfigSchema = z.object({
+  /** When false, play starts immediately with no splash. */
+  enabled: z.boolean().default(true),
+  theme: z.enum(INTRO_THEMES).default('arcade-neon'),
+  /** Big display title. Falls back to the game name when empty. */
+  title: z.string().default(''),
+  /** One-line hook under the title. */
+  subtitle: z.string().default(''),
+  /** Primary call-to-action label. */
+  ctaLabel: z.string().default('Play'),
+  /** Optional backdrop image (generated/uploaded asset URL) behind the theme. */
+  backgroundImageUrl: z.string().optional(),
+});
+
+export type IntroConfig = z.infer<typeof IntroConfigSchema>;
+
 // Main scene schema. Wrapped with .superRefine for SHARED-02 scene-level
 // cross-validation (orphan currentClip references on sprite elements).
 //
@@ -69,6 +92,8 @@ export const GameSceneSchema = z
     economy: GameEconomyConfigSchema.optional(),
     /** Optional play-mode config. When present, the scene is a playable game. */
     gameState: GameStateConfigSchema.optional(),
+    /** Optional themed intro / entry screen shown before play. */
+    intro: IntroConfigSchema.optional(),
   })
   .superRefine((scene, ctx) => {
     // SHARED-02: orphan currentClip cross-validation. For every sprite element

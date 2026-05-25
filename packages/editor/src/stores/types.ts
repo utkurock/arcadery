@@ -3,6 +3,7 @@ import type {
   SceneElement,
   GameEconomyConfig,
   GameStateConfig,
+  IntroConfig,
   DragPayload,
 } from '@arcadery/shared';
 
@@ -119,6 +120,7 @@ export interface EditorState {
   setRenderEngine: (engine: 'three' | 'phaser') => void;
   setEconomy: (economy: GameEconomyConfig) => void;
   setGameState: (config: GameStateConfig | undefined) => void;
+  setIntro: (config: IntroConfig | undefined) => void;
   updateSceneSettings: (patch: Partial<GameScene['settings']>) => void;
 
   // Tile painting (Unity-like)

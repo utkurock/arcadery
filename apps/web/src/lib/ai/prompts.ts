@@ -9,7 +9,7 @@ export const MODIFY_SYSTEM_PROMPT = `Modify a game scene element. Return complet
 Keep all required fields. Be creative with colors, sizes, positions.
 Numbers: position -50..50, scale 0.1..10, size 0.1..50, opacity/metalness/roughness 0..1.`;
 
-export const GENERATE_SYSTEM_PROMPT = `Game scene generator. Output JSON with renderEngine, elements[], description, gameState.
+export const GENERATE_SYSTEM_PROMPT = `Game scene generator. Output JSON with renderEngine, elements[], description, gameState, intro.
 
 You are not just placing furniture — you are wiring a PLAYABLE GAME. Every
 generated 2D scene must include a player element with a controller behavior,
@@ -156,10 +156,23 @@ Supported behaviors in 3D: third-person-controller, top-down-controller,
 auto-move, solid, pickup-on-contact, damage-on-contact, win-on-tag-destroyed.
 (shoot-projectile + spawner are 2D-only for now — don't use them in "three" scenes.)
 
+STEP 7 — INTRO SCREEN (ALWAYS include):
+Every game opens with a themed entry splash. ALWAYS include an "intro" object:
+{ "theme": one of "arcade-neon" | "sunset-pop" | "pixel-retro" | "clean-mint",
+  "title": short punchy game title (<=24 chars),
+  "subtitle": one-line hook (<=80 chars),
+  "ctaLabel": short button label, usually "Play" }
+Pick the theme that matches the vibe:
+- "arcade-neon" → sci-fi, cyber, space, neon shooters
+- "sunset-pop"  → casual, fun, colorful, collectathons
+- "pixel-retro" → retro, 8-bit, platformers, dungeon
+- "clean-mint"  → minimal, puzzle, calm, zen
+
 EXAMPLE 1 — "make a platformer where I collect coins":
 {
   "renderEngine": "phaser",
   "description": "Side-scrolling platformer with 3 platforms, 4 coins, and one patrolling enemy. Win by collecting all coins.",
+  "intro": {"theme":"pixel-retro","title":"Coin Dash","subtitle":"Grab every coin and dodge the patrol.","ctaLabel":"Play"},
   "elements": [
     {
       "id": "ground", "name": "Ground", "type": "box",

@@ -18,8 +18,10 @@ import {
   Plus,
   Play,
   Square as StopIcon,
+  LayoutGrid,
 } from 'lucide-react';
 import { useState } from 'react';
+import { ComponentsPanel } from './components-panel';
 import {
   createBoxElement,
   createSphereElement,
@@ -43,6 +45,7 @@ const btn = 'p-1.5 rounded-md transition-colors';
 
 export function CanvasToolbar() {
   const [showAdd, setShowAdd] = useState(false);
+  const [showComponents, setShowComponents] = useState(false);
   const transformMode = useEditorStore((s) => s.transformMode);
   const selectedId = useEditorStore((s) => s.selectedIds[0] ?? null);
   const mode = useEditorStore((s) => s.mode);
@@ -107,6 +110,26 @@ export function CanvasToolbar() {
                 {label}
               </button>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* Components — ready-made, behavior-wired building blocks */}
+      <div className="relative">
+        <button
+          onClick={() => {
+            setShowComponents((v) => !v);
+            setShowAdd(false);
+          }}
+          className={`${btn} ${showComponents ? 'bg-[#8b7ec8] text-white' : 'text-white/60 hover:text-white hover:bg-white/10'}`}
+          title="Components — ready-made building blocks"
+        >
+          <LayoutGrid size={16} />
+        </button>
+
+        {showComponents && (
+          <div className="absolute top-full left-0 mt-2 z-50">
+            <ComponentsPanel onClose={() => setShowComponents(false)} />
           </div>
         )}
       </div>

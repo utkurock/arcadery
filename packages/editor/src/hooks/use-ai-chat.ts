@@ -18,13 +18,14 @@ export interface ChatMessage {
   type?: 'welcome' | 'text' | 'loading' | 'error';
 }
 
-import { GameStateConfigSchema } from '@arcadery/shared';
+import { GameStateConfigSchema, IntroConfigSchema } from '@arcadery/shared';
 
 const GenerateResponseSchema = z.object({
   renderEngine: z.enum(['phaser', 'three']).optional(),
   elements: z.array(SceneElementSchema),
   description: z.string(),
   gameState: GameStateConfigSchema.optional(),
+  intro: IntroConfigSchema.optional(),
 });
 
 // Simple command parser — only matches exact/short commands, not natural language
@@ -324,6 +325,10 @@ export function useAiChat() {
                   gs.cameraFollowId = idMap.get(gs.cameraFollowId);
                 }
                 useEditorStore.getState().setGameState(gs);
+              }
+
+              if (result.data.intro) {
+                useEditorStore.getState().setIntro(result.data.intro);
               }
 
               description = result.data.description;
