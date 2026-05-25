@@ -13,7 +13,8 @@ export interface AiGenerateRequest {
   context: AiContext;
   mode: AiMode;
   /** Optional reference image: either a data: URL or an https URL pointing at
-   *  a user-uploaded asset. Server fetches/decodes and passes to Gemini as
-   *  inlineData so the model can actually look at the image. */
+   *  a user-uploaded asset. Server fetches/decodes and passes it to Claude as
+   *  an image block so the model can actually look at the image. Image-bearing
+   *  requests always route to Claude (Sonnet), since DeepSeek is text-only. */
   refImage?: string;
 }

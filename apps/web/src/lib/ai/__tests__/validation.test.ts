@@ -90,6 +90,7 @@ describe('SceneElementSchema validation', () => {
 describe('GenerateSceneResponseSchema validation', () => {
   it('accepts a valid response with elements array and description', () => {
     const response = {
+      renderEngine: 'three' as const,
       elements: [VALID_BOX, VALID_LIGHT],
       description: 'A simple scene with a red box and directional light.',
     };

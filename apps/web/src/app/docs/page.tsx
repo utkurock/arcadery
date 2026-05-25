@@ -166,7 +166,7 @@ There are **3 billion gamers** worldwide but only ~1 million game developers. Tr
 
 ## AI Changes Everything
 
-Arcadery uses Google Gemini to translate natural language into game scenes. The AI understands game design patterns and generates complete, playable scenes from descriptions.
+Arcadery uses DeepSeek to translate natural language into game scenes, with Claude (Sonnet) handling image-guided generation and visual element edits. The AI understands game design patterns and generates complete, playable scenes from descriptions.
 
 Anyone who can describe a game can now build one. The barrier drops from years of training to minutes of conversation.
 

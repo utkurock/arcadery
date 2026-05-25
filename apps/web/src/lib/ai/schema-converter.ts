@@ -3,43 +3,25 @@ import { SceneElementSchema, GameStateConfigSchema } from '@arcadery/shared/sche
 import { z } from 'zod';
 
 /**
- * Recursively clean JSON schema for Gemini compatibility:
- * - Remove $schema
- * - Convert "const" to "enum" (Gemini doesn't support "const")
- * - Remove unsupported keywords like "additionalProperties"
+ * Recursively strip the `$schema` meta key. zodToJsonSchema emits it at the
+ * top level; Anthropic tool `input_schema` doesn't want it. Everything else
+ * (anyOf for discriminated unions, numeric bounds, etc.) is left intact —
+ * non-strict tool use treats them as guidance and the route Zod-validates the
+ * returned input anyway.
  */
-function cleanForGemini(obj: unknown): unknown {
+function stripSchemaKey(obj: unknown): unknown {
   if (obj === null || obj === undefined) return obj;
-  if (Array.isArray(obj)) return obj.map(cleanForGemini);
+  if (Array.isArray(obj)) return obj.map(stripSchemaKey);
   if (typeof obj !== 'object') return obj;
 
   const record = obj as Record<string, unknown>;
   const result: Record<string, unknown> = {};
-
   for (const [key, value] of Object.entries(record)) {
-    // Skip $schema
     if (key === '$schema') continue;
-    // Skip additionalProperties (Gemini doesn't support it)
-    if (key === 'additionalProperties') continue;
-
-    // Convert "const" to "enum"
-    if (key === 'const') {
-      result['enum'] = [value];
-      continue;
-    }
-
-    result[key] = cleanForGemini(value);
+    result[key] = stripSchemaKey(value);
   }
-
   return result;
 }
-
-// ---------------------------------------------------------------------------
-// Modify mode: AI returns a single SceneElement
-// ---------------------------------------------------------------------------
-export const modifyElementJsonSchema = cleanForGemini(
-  zodToJsonSchema(SceneElementSchema, { $refStrategy: 'none' }),
-) as Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
 // Generate mode: AI returns an array of elements + description
@@ -55,8 +37,28 @@ export const GenerateSceneResponseSchema = z.object({
   ),
 });
 
-export const generateSceneJsonSchema = cleanForGemini(
-  zodToJsonSchema(GenerateSceneResponseSchema, {
-    $refStrategy: 'none',
-  }),
+/**
+ * Tool schema for the generate flow (Sonnet, when a reference image is
+ * attached). The response object is already a plain object, so it maps
+ * directly onto an Anthropic tool `input_schema`.
+ */
+export const generateSceneToolSchema = stripSchemaKey(
+  zodToJsonSchema(GenerateSceneResponseSchema, { $refStrategy: 'none' }),
 ) as Record<string, unknown>;
+
+/**
+ * Tool schema for the modify flow (Sonnet). `SceneElementSchema` is a
+ * discriminated union → `anyOf` at the top level, which can't be a tool
+ * `input_schema` root (must be an object). We wrap it under `element` and the
+ * route reads `toolInput.element`.
+ */
+export const modifyElementToolSchema: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    element: stripSchemaKey(
+      zodToJsonSchema(SceneElementSchema, { $refStrategy: 'none' }),
+    ),
+  },
+  required: ['element'],
+  additionalProperties: false,
+};

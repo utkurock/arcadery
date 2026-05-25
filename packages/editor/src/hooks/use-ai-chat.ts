@@ -211,7 +211,7 @@ export function useAiChat() {
           mode,
           // Pass the attached reference image (data URL from picker, or
           // remote asset URL from "Send to chat") so the server can hand it
-          // to Gemini as inlineData. Omitted when null/undefined.
+          // to Claude as an image block. Omitted when null/undefined.
           ...(refImage ? { refImage } : {}),
         }),
         signal: controller.signal,
@@ -237,7 +237,7 @@ export function useAiChat() {
           };
         }
         // Surface the actual server error message instead of the opaque
-        // "Server error (500)" — makes Gemini quota/schema/model issues
+        // "Server error (500)" — makes AI quota/schema/model issues
         // debuggable without diving into the dev terminal.
         const detail = await res.json().catch(() => null);
         const msg =

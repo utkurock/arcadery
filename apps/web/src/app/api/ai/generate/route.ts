@@ -1,8 +1,10 @@
 import { NextRequest } from 'next/server';
-import { getGeminiClient, GEMINI_MODEL } from '@/lib/ai/gemini';
+import { deepseekJson } from '@/lib/ai/deepseek';
+import { anthropicStructured, type AnthropicImage } from '@/lib/ai/anthropic';
 import {
-  modifyElementJsonSchema,
-  generateSceneJsonSchema,
+  GenerateSceneResponseSchema,
+  generateSceneToolSchema,
+  modifyElementToolSchema,
 } from '@/lib/ai/schema-converter';
 import {
   MODIFY_SYSTEM_PROMPT,
@@ -10,29 +12,41 @@ import {
   buildUserPrompt,
 } from '@/lib/ai/prompts';
 import type { AiGenerateRequest } from '@/lib/ai/types';
+import { SceneElementSchema } from '@arcadery/shared/schemas';
 import { createClient } from '@/lib/supabase/server';
 import { spendCredits, grantCredits, InsufficientCreditsError } from '@/lib/credits/server';
 import { AI_GENERATE_COST, INSUFFICIENT_CREDITS_STATUS } from '@/lib/credits/config';
 import { checkRateLimit, clientIp } from '@/lib/rate-limit';
 
-const MAX_REF_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB — Gemini inline limit is 20MB; we cap lower for cost.
+const MAX_REF_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB — keep ref images small for cost.
+
+const ANTHROPIC_MEDIA_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+]);
 
 /**
- * Resolve a reference image (data URL or remote URL) into a Gemini inline-data
- * part. Returns null on any failure — the caller falls back to text-only so a
- * broken / oversized image never blocks the generation request.
+ * Resolve a reference image (data URL or remote URL) into an Anthropic image
+ * block. Returns null on any failure — the caller falls back to text-only so a
+ * broken / oversized image never blocks the request. Only Claude (Sonnet) sees
+ * images; DeepSeek is text-only, so any image-bearing request routes to Sonnet.
  */
-async function resolveRefImagePart(refImage: string): Promise<
-  { inlineData: { mimeType: string; data: string } } | null
-> {
+async function resolveRefImagePart(refImage: string): Promise<AnthropicImage | null> {
   try {
     if (refImage.startsWith('data:')) {
       const match = refImage.match(/^data:([^;]+);base64,(.+)$/);
       if (!match) return null;
       const [, mimeType, data] = match;
+      if (!ANTHROPIC_MEDIA_TYPES.has(mimeType)) return null;
       // base64 string length × 3/4 ≈ byte size.
       if (data.length * 0.75 > MAX_REF_IMAGE_BYTES) return null;
-      return { inlineData: { mimeType, data } };
+      return {
+        kind: 'base64',
+        mediaType: mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+        data,
+      };
     }
     if (/^https?:\/\//i.test(refImage)) {
       const res = await fetch(refImage);
@@ -42,8 +56,13 @@ async function resolveRefImagePart(refImage: string): Promise<
       const buf = await res.arrayBuffer();
       if (buf.byteLength > MAX_REF_IMAGE_BYTES) return null;
       const mimeType = res.headers.get('content-type') ?? 'image/png';
+      if (!ANTHROPIC_MEDIA_TYPES.has(mimeType)) return null;
       const data = Buffer.from(buf).toString('base64');
-      return { inlineData: { mimeType, data } };
+      return {
+        kind: 'base64',
+        mediaType: mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+        data,
+      };
     }
     return null;
   } catch {
@@ -72,8 +91,45 @@ function sanitizeNumbers(obj: unknown): unknown {
   return obj;
 }
 
+/**
+ * Generate a full scene with DeepSeek. DeepSeek guarantees valid JSON but not
+ * schema conformance, so we parse → sanitize → Zod-validate, retrying once with
+ * a stricter nudge if the shape is wrong. Returns the sanitized object on success.
+ */
+async function generateSceneWithDeepSeek(userPrompt: string): Promise<unknown> {
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const user =
+      attempt === 0
+        ? userPrompt
+        : `${userPrompt}\n\nYour previous response did not match the required JSON shape. Return ONLY a valid JSON object with renderEngine, elements[], description (and gameState for playable 2D scenes). No prose, no markdown.`;
+    const raw = await deepseekJson({ system: GENERATE_SYSTEM_PROMPT, user });
+    if (!raw) {
+      lastErr = new Error('Empty response from DeepSeek');
+      continue;
+    }
+    // Defensive: strip pathological long number runs before parsing.
+    const cleaned = raw.replace(/(\d+\.?\d{0,4})\d{10,}/g, '$1');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (e) {
+      lastErr = e;
+      continue;
+    }
+    const sanitized = sanitizeNumbers(parsed);
+    const check = GenerateSceneResponseSchema.safeParse(sanitized);
+    if (check.success) return sanitized;
+    lastErr = check.error;
+  }
+  throw lastErr ?? new Error('DeepSeek failed to produce a valid scene');
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/ai/generate — non-streaming for reliability
+//   • mode: 'modify'                         → Sonnet (tool use, single element)
+//   • mode: 'generate' + reference image     → Sonnet (vision, full scene)
+//   • mode: 'generate' (text only)           → DeepSeek (full scene)
 // ---------------------------------------------------------------------------
 export async function POST(req: NextRequest) {
   let body: AiGenerateRequest;
@@ -134,12 +190,8 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Credit system error' }, { status: 500 });
   }
 
-  const systemPrompt = mode === 'modify' ? MODIFY_SYSTEM_PROMPT : GENERATE_SYSTEM_PROMPT;
-  const jsonSchema = mode === 'modify' ? modifyElementJsonSchema : generateSceneJsonSchema;
-  // We resolve the image part below, but the prompt builder needs to know
-  // up-front whether one will be attached so it can add explicit "use this
-  // image" instructions to the text part. Without that, Gemini sees the
-  // image but treats it as decorative and ignores it entirely.
+  // Resolve the image up-front so buildUserPrompt can add explicit "use this
+  // image" instructions when one is actually attached.
   const refPart = refImage ? await resolveRefImagePart(refImage) : null;
   const userPrompt = buildUserPrompt(prompt, context, mode, !!refPart);
 
@@ -157,85 +209,54 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const client = getGeminiClient();
+    let sanitized: unknown;
 
-    // Build contents with optional reference image. When the user attached
-    // an image (via the Image button, drag-from-asset-gallery, or "Send to
-    // chat"), pass it inline so Gemini can actually look at it instead of
-    // just having a thumbnail floating in the UI. Failed image resolution
-    // (404, too large, malformed data URL) downgrades to text-only.
-    // refPart was resolved above so userPrompt could be built with the right
-    // "use this image" instructions when an image is actually attached.
-    const contents = refPart
-      ? [{ role: 'user' as const, parts: [refPart, { text: userPrompt }] }]
-      : userPrompt;
-
-    // Two-tier attempt: prefer strict schema validation, fall back to JSON
-    // mime type alone if Gemini reports INTERNAL (we hit this with 2.5-flash
-    // on our large discriminated-union schema — Google's planner sometimes
-    // returns 500 INTERNAL for big responseSchema payloads). The fallback
-    // still asks for `application/json`, and our server-side JSON.parse
-    // + sanitizer handles the rest.
-    let response: Awaited<ReturnType<typeof client.models.generateContent>> | null = null;
-    let lastErr: unknown = null;
-    // Two attempts max — strict schema first, no-schema fallback if Gemini
-    // chokes on our discriminated union. The previous 3-attempt schedule (2
-    // schema retries + fallback) added ~14s of wait when 2.5-flash returned
-    // INTERNAL twice in a row. Faster to skip straight to the fallback.
-    const attempts: Array<{ withSchema: boolean; label: string }> = [
-      { withSchema: true, label: 'schema' },
-      { withSchema: false, label: 'no-schema fallback' },
-    ];
-    for (let i = 0; i < attempts.length; i++) {
-      const { withSchema, label } = attempts[i];
-      try {
-        response = await client.models.generateContent({
-          model: GEMINI_MODEL,
-          contents,
-          config: withSchema
-            ? {
-                responseMimeType: 'application/json',
-                responseSchema: jsonSchema,
-                systemInstruction: systemPrompt,
-              }
-            : {
-                responseMimeType: 'application/json',
-                systemInstruction: systemPrompt,
-              },
-        });
-        if (i > 0) console.warn(`[ai/generate] succeeded on ${label}`);
-        break;
-      } catch (err) {
-        lastErr = err;
-        const msg = err instanceof Error ? err.message : String(err);
-        const retriable = /INTERNAL|UNAVAILABLE|503|502|504|deadline|timeout/i.test(msg);
-        if (!retriable || i === attempts.length - 1) throw err;
-        console.warn(`[ai/generate] retriable error (${label}):`, msg.slice(0, 200));
-        await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+    if (mode === 'modify') {
+      // Visual / styling edit of a single selected element → Sonnet tool use.
+      const toolInput = (await anthropicStructured({
+        system: MODIFY_SYSTEM_PROMPT,
+        userText: userPrompt,
+        image: refPart,
+        tool: {
+          name: 'return_element',
+          description:
+            'Return the complete modified scene element as JSON, keeping the same id and type.',
+          input_schema: modifyElementToolSchema,
+        },
+      })) as { element?: unknown };
+      const element = sanitizeNumbers(toolInput?.element);
+      const check = SceneElementSchema.safeParse(element);
+      if (!check.success) {
+        await refund('invalid_element');
+        return Response.json({ error: 'AI returned an invalid element' }, { status: 500 });
       }
+      sanitized = element;
+    } else if (refPart) {
+      // Generation guided by a reference image → Sonnet (vision-capable).
+      const toolInput = await anthropicStructured({
+        system: GENERATE_SYSTEM_PROMPT,
+        userText: userPrompt,
+        image: refPart,
+        tool: {
+          name: 'return_scene',
+          description:
+            'Return the generated game scene as JSON: renderEngine, elements[], description, and gameState when playable.',
+          input_schema: generateSceneToolSchema,
+        },
+      });
+      const candidate = sanitizeNumbers(toolInput);
+      const check = GenerateSceneResponseSchema.safeParse(candidate);
+      if (!check.success) {
+        await refund('invalid_scene');
+        return Response.json({ error: 'AI returned an invalid scene' }, { status: 500 });
+      }
+      sanitized = candidate;
+    } else {
+      // Plain text-prompt generation → DeepSeek (with validate + retry).
+      sanitized = await generateSceneWithDeepSeek(userPrompt);
     }
-    if (!response) throw lastErr ?? new Error('No response after retries');
 
-    const rawText = response.text;
-    if (!rawText) {
-      await refund('empty_response');
-      return Response.json({ error: 'Empty response from AI' }, { status: 500 });
-    }
-
-    // Parse and sanitize numbers
-    let parsed: unknown;
-    try {
-      // Fix Gemini's infinite-zero bug: truncate long number sequences
-      const cleaned = rawText.replace(/(\d+\.?\d{0,4})\d{10,}/g, '$1');
-      parsed = JSON.parse(cleaned);
-    } catch {
-      await refund('invalid_json');
-      return Response.json({ error: 'Invalid JSON in AI response' }, { status: 500 });
-    }
-
-    const sanitized = sanitizeNumbers(parsed);
-
-    // Return as SSE for compatibility with existing client code
+    // Return as SSE for compatibility with existing client code.
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
@@ -258,20 +279,18 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err) {
-    console.error('[ai/generate] gemini call failed:', err);
-    await refund('gemini_error');
+    console.error('[ai/generate] generation failed:', err);
+    await refund('ai_error');
+    const status = (err as { status?: number })?.status;
     const raw = err instanceof Error ? err.message : 'Unknown error';
-    // Friendly mapping for known Gemini error classes — gives the user
-    // something actionable instead of the raw JSON error envelope.
+    // Friendly mapping for the common failure classes across DeepSeek + Claude.
     let message = raw;
-    if (/INTERNAL|UNAVAILABLE|503|502|504/i.test(raw)) {
-      message = "Gemini is having a moment — please try again in a few seconds.";
-    } else if (/RESOURCE_EXHAUSTED|429|quota/i.test(raw)) {
+    if (status === 429 || /rate.?limit|RESOURCE_EXHAUSTED|quota/i.test(raw)) {
       message = 'AI rate limit hit. Wait a minute and try again.';
-    } else if (/PERMISSION_DENIED|401|API key/i.test(raw)) {
+    } else if (status === 401 || status === 403 || /API key|authentication|permission/i.test(raw)) {
       message = 'AI service not authorized. The API key may be invalid or expired.';
-    } else if (/SAFETY|blocked/i.test(raw)) {
-      message = 'Prompt was blocked by content filters. Try rephrasing.';
+    } else if (status === 529 || (status !== undefined && status >= 500) || /overloaded|unavailable|timeout|deadline/i.test(raw)) {
+      message = 'The AI is having a moment — please try again in a few seconds.';
     }
     return Response.json({ error: message }, { status: 500 });
   }
