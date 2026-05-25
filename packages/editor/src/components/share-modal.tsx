@@ -19,7 +19,15 @@ export function ShareModal({ isOpen, onClose, slug, gameName }: ShareModalProps)
   if (!isOpen) return null;
 
   const origin = window.location.origin;
-  const playUrl = `${origin}/play/${slug}`;
+  // Promote the share URL to the game's subdomain (`<slug>.arcadery.xyz`),
+  // which the middleware transparently rewrites to /play/<slug>. The editor
+  // lives at `arcadery.xyz/create/...` (or `<oldslug>.arcadery.xyz` if the
+  // user opens share from an existing game), so we strip any existing leading
+  // label before adding the slug — never stack labels.
+  const playUrl = buildGameUrl(origin, slug);
+  // Embed deliberately stays on the path form. Subdomain rewrites cover the
+  // embed sub-route too, but iframes embedded on third-party sites do best
+  // with a stable canonical path and no extra DNS hops.
   const embedUrl = `${origin}/play/${slug}/embed`;
   const embedCode = `<iframe src="${embedUrl}" width="800" height="600" frameborder="0" allowfullscreen></iframe>`;
 
@@ -172,4 +180,30 @@ export function ShareModal({ isOpen, onClose, slug, gameName }: ShareModalProps)
       </div>
     </div>
   );
+}
+
+// Build the subdomain-form share URL: `https://<slug>.<apex>`. We strip an
+// existing leading label first so opening the share modal from
+// `<oldslug>.arcadery.xyz` doesn't produce `<newslug>.<oldslug>.arcadery.xyz`.
+// Falls back to the path form if the origin doesn't have a structure we
+// recognise (rare — local file://, opaque sandboxes).
+function buildGameUrl(origin: string, slug: string): string {
+  try {
+    const url = new URL(origin);
+    const apex = stripLeadingSubdomain(url.hostname);
+    if (apex === 'localhost' || apex.includes('.')) {
+      url.hostname = `${slug}.${apex}`;
+      url.pathname = '';
+      return url.toString().replace(/\/$/, '');
+    }
+  } catch {}
+  return `${origin}/play/${slug}`;
+}
+
+function stripLeadingSubdomain(hostname: string): string {
+  const parts = hostname.split('.');
+  // < 3 labels is either bare `localhost` or apex `arcadery.xyz` — no
+  // subdomain to strip.
+  if (parts.length < 3) return hostname;
+  return parts.slice(1).join('.');
 }

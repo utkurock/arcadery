@@ -18,6 +18,7 @@ import { TokenSection } from '@/components/tokens/token-section';
 import { TouchControls } from '@/components/play/touch-controls';
 import { FlyBirdsEntryGate } from '@/components/play/fly-birds-entry-gate';
 import { FlyBirdsClaimScreen } from '@/components/play/fly-birds-claim-screen';
+import { AnalyticsBeacon, fireGameEvent } from '@/components/play/analytics-beacon';
 
 const FLY_BIRDS_SLUG = 'template-fly-birds';
 
@@ -167,6 +168,21 @@ export function PlayClient({ game, isOwner = false }: { game: PlayGame; isOwner?
     };
   }, [isPlayable]);
 
+  // Per-run play_start beacon. Fires once per remount (restartRun bumps
+  // runId, which clears playStartFiredRef on the next mount via the
+  // dependency below). Guard against the 'playing' status flickering on
+  // pause/resume — only the first transition counts.
+  const playStartFiredRef = useRef(false);
+  useEffect(() => {
+    playStartFiredRef.current = false;
+  }, [runId]);
+  useEffect(() => {
+    if (playStartFiredRef.current) return;
+    if (runtimeState?.status !== 'playing') return;
+    playStartFiredRef.current = true;
+    fireGameEvent(game.slug, 'play_start');
+  }, [runtimeState?.status, game.slug]);
+
   // Fly Birds: post the run's final score to the prize-pool leaderboard, then
   // refresh the pool/rank so the claim screen reflects the new ranking.
   // Wallet-keyed (no anon entries — they couldn't have paid the entry).
@@ -249,12 +265,13 @@ export function PlayClient({ game, isOwner = false }: { game: PlayGame; isOwner?
           try {
             sessionStorage.setItem(submittedKey, String(scoreToSubmit));
           } catch {}
+          fireGameEvent(game.slug, 'score_submit');
         }
       } catch {
         // best effort — don't block the UI on submission failure
       }
     })();
-  }, [runtimeState, autoSubmitted, game.id]);
+  }, [runtimeState, autoSubmitted, game.id, game.slug]);
 
   useEffect(() => {
     if (hydratedRef.current) return;
@@ -309,6 +326,7 @@ export function PlayClient({ game, isOwner = false }: { game: PlayGame; isOwner?
         p_score: score,
         p_wallet_address: walletAddress,
       });
+      fireGameEvent(game.slug, 'score_submit');
       setSubmitted(true);
       setSubmitScore('');
       loadLeaderboard();
@@ -328,6 +346,11 @@ export function PlayClient({ game, isOwner = false }: { game: PlayGame; isOwner?
 
   return (
     <div className="h-screen w-screen bg-[#1e1f26] text-white relative overflow-hidden">
+      {/* Per-game analytics — view event fires once on mount (server-side
+          dropped for owners so creators testing their own game can't inflate
+          metrics). play_start + score_submit are fired imperatively above. */}
+      <AnalyticsBeacon slug={game.slug} isOwner={isOwner} />
+
       {/* Top overlay bar — z-50 sits above the canvas so game elements (pipes,
           tilemaps) can't render through it. Solid backdrop on Fly Birds where
           the bright sky would otherwise wash out the controls. */}

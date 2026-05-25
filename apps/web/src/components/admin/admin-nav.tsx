@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ArrowLeft, BarChart3, Coins, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, BarChart3, Coins, Gamepad2, ShieldCheck } from 'lucide-react';
 
 // Sidebar for the admin section. Server component would also work, but we
 // want active-link styling and that needs `usePathname()` which is
@@ -16,6 +16,7 @@ export function AdminNav({ wallet }: Props) {
   const pathname = usePathname();
   const items = [
     { href: '/admin/overview', label: 'Overview', icon: BarChart3 },
+    { href: '/admin/games', label: 'Games', icon: Gamepad2 },
     { href: '/admin/tokens', label: 'Tokens', icon: Coins },
   ];
   return (
