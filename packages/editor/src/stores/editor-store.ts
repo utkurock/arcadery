@@ -193,6 +193,19 @@ export const useEditorStore = create<EditorState>()(
         });
       },
 
+      setOutro: (config) => {
+        set((state) => {
+          state.scene.outro = config;
+        });
+      },
+
+      editorPage: 'game',
+      setEditorPage: (page) => {
+        set((state) => {
+          state.editorPage = page;
+        });
+      },
+
       updateSceneSettings: (patch) => {
         set((state) => {
           Object.assign(state.scene.settings, patch);

@@ -72,6 +72,16 @@ export const IntroConfigSchema = z.object({
 
 export type IntroConfig = z.infer<typeof IntroConfigSchema>;
 
+// The END page — copy shown on the win/lose overlay. Styled by the intro theme.
+export const OutroConfigSchema = z.object({
+  winTitle: z.string().default('You won!'),
+  winSubtitle: z.string().default(''),
+  loseTitle: z.string().default('Game over'),
+  loseSubtitle: z.string().default(''),
+});
+
+export type OutroConfig = z.infer<typeof OutroConfigSchema>;
+
 // Main scene schema. Wrapped with .superRefine for SHARED-02 scene-level
 // cross-validation (orphan currentClip references on sprite elements).
 //
@@ -94,6 +104,8 @@ export const GameSceneSchema = z
     gameState: GameStateConfigSchema.optional(),
     /** Optional themed intro / entry screen shown before play. */
     intro: IntroConfigSchema.optional(),
+    /** Optional end-screen copy (win/lose titles + subtitles). */
+    outro: OutroConfigSchema.optional(),
   })
   .superRefine((scene, ctx) => {
     // SHARED-02: orphan currentClip cross-validation. For every sprite element

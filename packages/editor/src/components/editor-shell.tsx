@@ -9,6 +9,7 @@ import { AiChatPanel } from './panels/ai-chat-panel';
 import { AnimationsPanel } from './panels/animations-panel';
 import { EditorViewport } from '../viewport/editor-viewport';
 import { CanvasToolbar } from './canvas-toolbar';
+import { PageTabs, IntroPageEditor, EndPageEditor } from './page-editor';
 import type { AssetManagerProps } from './asset-manager';
 import type { AssetPackInfo } from './asset-library';
 
@@ -72,6 +73,7 @@ export function EditorShell({ projectId, projectName, saveStatus, onLogout, asse
   const [consoleLogs, setConsoleLogs] = useState<Array<{ type: string; message: string; time: string }>>([]);
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
   const viewMode = useEditorStore((s) => s.viewMode);
+  const editorPage = useEditorStore((s) => s.editorPage);
   useKeyboardShortcuts();
   useSelectionKeyboard();
 
@@ -150,6 +152,13 @@ export function EditorShell({ projectId, projectName, saveStatus, onLogout, asse
               <div className="absolute inset-0 z-10">
                 <EditorViewport />
               </div>
+              {/* Intro / End page editors overlay the canvas (z-20, below the
+                  top controls at z-30 so PageTabs stays clickable). */}
+              {editorPage !== 'game' && (
+                <div className="absolute inset-0 z-20 overflow-hidden bg-[#0e0e12] pt-16">
+                  {editorPage === 'intro' ? <IntroPageEditor /> : <EndPageEditor />}
+                </div>
+              )}
               {/* Mini animator inspector — auto-shows when a single sprite
                   element is selected, hidden otherwise. Lives above the
                   viewport but below the modals. */}
@@ -175,6 +184,7 @@ export function EditorShell({ projectId, projectName, saveStatus, onLogout, asse
                       3D
                     </button>
                   </div>
+                  <PageTabs />
                   {assetPacks.length > 0 && (
                     <button
                       onClick={() => setLibraryOpen(true)}

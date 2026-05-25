@@ -549,8 +549,19 @@ export function PlayClient({ game, isOwner = false }: { game: PlayGame; isOwner?
             <h2 className={`text-3xl font-bold mb-2 ${
               runtimeState.status === 'won' ? 'text-emerald-400' : 'text-red-400'
             }`}>
-              {runtimeState.status === 'won' ? 'You won!' : 'Game over'}
+              {runtimeState.status === 'won'
+                ? game.scene?.outro?.winTitle || 'You won!'
+                : game.scene?.outro?.loseTitle || 'Game over'}
             </h2>
+            {(runtimeState.status === 'won'
+              ? game.scene?.outro?.winSubtitle
+              : game.scene?.outro?.loseSubtitle) && (
+              <p className="text-sm text-white/60 mb-2">
+                {runtimeState.status === 'won'
+                  ? game.scene?.outro?.winSubtitle
+                  : game.scene?.outro?.loseSubtitle}
+              </p>
+            )}
             <p className="text-sm text-white/50 mb-2">
               Final score: <span className="text-white font-semibold">{runtimeState.score}</span>
             </p>

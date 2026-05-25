@@ -4,8 +4,13 @@ import type {
   GameEconomyConfig,
   GameStateConfig,
   IntroConfig,
+  OutroConfig,
   DragPayload,
 } from '@arcadery/shared';
+
+/** Which authoring "page" the editor is showing: the playable scene, the
+ *  themed intro splash, or the win/lose end screen. */
+export type EditorPage = 'intro' | 'game' | 'end';
 
 /**
  * Element attached to the AI chat panel (STORE-01).
@@ -121,7 +126,12 @@ export interface EditorState {
   setEconomy: (economy: GameEconomyConfig) => void;
   setGameState: (config: GameStateConfig | undefined) => void;
   setIntro: (config: IntroConfig | undefined) => void;
+  setOutro: (config: OutroConfig | undefined) => void;
   updateSceneSettings: (patch: Partial<GameScene['settings']>) => void;
+
+  // Authoring page (Intro · Game · End)
+  editorPage: EditorPage;
+  setEditorPage: (page: EditorPage) => void;
 
   // Tile painting (Unity-like)
   paintTile: { assetPack: string; assetCategory: string; assetIndex: number } | null;
