@@ -22,8 +22,8 @@ const AssetManager = dynamic(() => import('./asset-manager').then((m) => m.Asset
 const ShareModal = dynamic(() => import('./share-modal').then((m) => m.ShareModal), {
   ssr: false,
 });
-const GameEconomySettings = dynamic(
-  () => import('./game-economy-settings').then((m) => m.GameEconomySettings),
+const PublishFlow = dynamic(
+  () => import('./publish-flow').then((m) => m.PublishFlow),
   { ssr: false },
 );
 const GameMechanicsSettings = dynamic(
@@ -64,9 +64,8 @@ export function EditorShell({ projectId, projectName, saveStatus, onLogout, asse
   });
   const [showHistory, setShowHistory] = useState(false);
   const [shareSlug, setShareSlug] = useState<string | null>(null);
-  const [publishing, setPublishing] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
-  const [economyOpen, setEconomyOpen] = useState(false);
   const [mechanicsOpen, setMechanicsOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [consoleHeight, setConsoleHeight] = useState(200);
@@ -121,11 +120,8 @@ export function EditorShell({ projectId, projectName, saveStatus, onLogout, asse
         onToggleHistory={() => setShowHistory(!showHistory)}
         saveStatus={saveStatus}
         onLogout={onLogout}
-        onPublish={onPublish}
-        publishing={publishing}
-        setPublishing={setPublishing}
-        setShareSlug={setShareSlug}
-        onSettings={() => setEconomyOpen(true)}
+        onOpenPublish={() => setPublishOpen(true)}
+        onSettings={() => setMechanicsOpen(true)}
         rightSlot={topBarRightSlot}
       />
 
@@ -313,8 +309,16 @@ export function EditorShell({ projectId, projectName, saveStatus, onLogout, asse
           gameName={useEditorStore.getState().scene.name || 'Your Game'}
         />
       )}
-      {economyOpen && (
-        <GameEconomySettings isOpen={economyOpen} onClose={() => setEconomyOpen(false)} />
+      {publishOpen && (
+        <PublishFlow
+          open={publishOpen}
+          onClose={() => setPublishOpen(false)}
+          onPublish={onPublish}
+          onPublished={(slug) => {
+            setPublishOpen(false);
+            setShareSlug(slug);
+          }}
+        />
       )}
       {mechanicsOpen && (
         <GameMechanicsSettings isOpen={mechanicsOpen} onClose={() => setMechanicsOpen(false)} />
@@ -380,10 +384,7 @@ function TopBar({
   onToggleHistory,
   saveStatus,
   onLogout,
-  onPublish,
-  publishing,
-  setPublishing,
-  setShareSlug,
+  onOpenPublish,
   onSettings,
   rightSlot,
 }: {
@@ -395,10 +396,7 @@ function TopBar({
   onToggleHistory: () => void;
   saveStatus?: 'saved' | 'saving' | 'error' | 'idle';
   onLogout?: () => void;
-  onPublish?: () => Promise<string | null>;
-  publishing: boolean;
-  setPublishing: (v: boolean) => void;
-  setShareSlug: (v: string | null) => void;
+  onOpenPublish?: () => void;
   onSettings?: () => void;
   rightSlot?: React.ReactNode;
 }) {
@@ -521,29 +519,14 @@ function TopBar({
 
         <button
           className="px-5 py-1.5 rounded-lg text-sm font-semibold text-white transition-colors"
-          style={{ backgroundColor: publishing ? '#7a6db8' : '#8b7ec8' }}
-          onClick={async () => {
-            if (!onPublish || publishing) return;
-            setPublishing(true);
-            try {
-              const slug = await onPublish();
-              if (slug) {
-                setShareSlug(slug);
-              } else {
-                // The web app's login modal listens for this event and opens
-                // itself. Keeps the editor decoupled from the host's auth UI.
-                window.dispatchEvent(new CustomEvent('arcadery:auth-required'));
-              }
-            } finally {
-              setPublishing(false);
-            }
-          }}
+          style={{ backgroundColor: '#8b7ec8' }}
+          onClick={() => onOpenPublish?.()}
         >
-          {publishing ? 'Publishing...' : 'Publish'}
+          Publish
         </button>
         {rightSlot}
         {/* Settings */}
-        <button onClick={onSettings} className="p-2 rounded-full text-white/40 hover:text-white/70 hover:bg-white/[0.05] transition-colors" title="Game Economy">
+        <button onClick={onSettings} className="p-2 rounded-full text-white/40 hover:text-white/70 hover:bg-white/[0.05] transition-colors" title="Game Settings">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37a1.724 1.724 0 002.572-1.065z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" /><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" /></svg>
         </button>
       </div>

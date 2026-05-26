@@ -266,7 +266,17 @@ function cssToObj(css: string): CSSProperties {
     const idx = decl.indexOf(':');
     if (idx === -1) continue;
     const prop = decl.slice(0, idx).trim().replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-    out[prop] = decl.slice(idx + 1).trim();
+    const value = decl.slice(idx + 1).trim();
+    // Gradient titles pair `background` with `background-clip:text`. React warns
+    // when a `background` shorthand and a non-shorthand `backgroundClip` live in
+    // the same style object. A gradient is really an image, so route it to the
+    // specific `backgroundImage` longhand and avoid the conflict. Solid-colour
+    // values (e.g. button backgrounds) stay on the `background` shorthand.
+    if (prop === 'background' && value.includes('gradient')) {
+      out.backgroundImage = value;
+      continue;
+    }
+    out[prop] = value;
   }
   return out as CSSProperties;
 }
