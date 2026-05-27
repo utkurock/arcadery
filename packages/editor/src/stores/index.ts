@@ -6,4 +6,6 @@ export type {
   PendingDrop,
   AnimationRuntime,
   AnimationRuntimeState,
+  SavedPrefab,
+  EditorPage,
 } from './types';

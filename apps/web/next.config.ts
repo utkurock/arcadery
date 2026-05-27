@@ -28,9 +28,6 @@ function pkgDir(name: string): string | null {
 }
 
 const nextConfig: NextConfig = {
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   transpilePackages: ['@arcadery/shared', '@arcadery/engine', '@arcadery/editor'],
   images: {
     remotePatterns: [

@@ -152,7 +152,15 @@ export function EditorShell({ projectId, projectName, saveStatus, onLogout, asse
                   top controls at z-30 so PageTabs stays clickable). */}
               {editorPage !== 'game' && (
                 <div className="absolute inset-0 z-20 overflow-hidden bg-[#0e0e12] pt-16">
-                  {editorPage === 'intro' ? <IntroPageEditor /> : <EndPageEditor />}
+                  {editorPage === 'intro' ? (
+                    <IntroPageEditor
+                      imageAssets={(assetProps?.assets ?? []).filter((a) =>
+                        a.type.startsWith('image'),
+                      )}
+                    />
+                  ) : (
+                    <EndPageEditor />
+                  )}
                 </div>
               )}
               {/* Mini animator inspector — auto-shows when a single sprite

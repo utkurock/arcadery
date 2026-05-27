@@ -13,6 +13,10 @@ export interface AssetFrameInfo {
   provider?: string;
   thumbnail_url?: string;
   meshy_task_id?: string;
+  /** Set once a preview model has been upgraded to a textured PBR model. */
+  refined?: boolean;
+  /** Set on rigged variants (humanoid skeleton + basic animation library). */
+  rigged?: boolean;
 }
 
 export interface AssetData {
@@ -55,6 +59,10 @@ export interface AssetManagerProps {
     asset: AssetData,
     opts: { prompt: string; style: GenerateStyle },
   ) => Promise<void>;
+  /** Upgrade a Meshy preview model to a textured PBR model (in place). */
+  onRefine3D?: (asset: AssetData) => Promise<void>;
+  /** Rig a model (humanoid skeleton + basic animations) into a new asset. */
+  onRig3D?: (asset: AssetData) => Promise<void>;
 }
 
 const defaultProps: AssetManagerProps = {
@@ -76,7 +84,7 @@ const STYLE_OPTIONS: { id: GenerateStyle; label: string }[] = [
 ];
 
 export function AssetManager(props: Partial<AssetManagerProps> = {}) {
-  const { assets, uploading, error, onUpload, onDelete, onUseInScene, onGenerate, onGenerate3D, onEdit } = {
+  const { assets, uploading, error, onUpload, onDelete, onUseInScene, onGenerate, onGenerate3D, onEdit, onRefine3D, onRig3D } = {
     ...defaultProps,
     ...props,
   };
@@ -85,6 +93,22 @@ export function AssetManager(props: Partial<AssetManagerProps> = {}) {
   const [genOpen, setGenOpen] = useState(false);
   const [gen3DOpen, setGen3DOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AssetData | null>(null);
+  // Per-asset busy flag so Refine/Rig buttons can show progress + disable while
+  // the (long) Meshy round-trip is in flight.
+  const [busyAssetId, setBusyAssetId] = useState<string | null>(null);
+
+  const runModelOp = useCallback(
+    async (asset: AssetData, op?: (a: AssetData) => Promise<void>) => {
+      if (!op || busyAssetId) return;
+      setBusyAssetId(asset.id);
+      try {
+        await op(asset);
+      } finally {
+        setBusyAssetId(null);
+      }
+    },
+    [busyAssetId],
+  );
 
   const handleUploadClick = useCallback(() => {
     const input = document.createElement('input');
@@ -150,7 +174,7 @@ export function AssetManager(props: Partial<AssetManagerProps> = {}) {
             </svg>
             <span className="text-xs font-semibold text-white">Generate 3D</span>
             <span className="text-[10px] text-white/40 leading-snug">
-              Text → rigged GLB model · 15 cr
+              Text → GLB model · 15 cr · refine &amp; rig after
             </span>
           </button>
         )}
@@ -278,7 +302,7 @@ export function AssetManager(props: Partial<AssetManagerProps> = {}) {
                         <path d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
                       </svg>
                     </button>
-                    {onEdit && (
+                    {onEdit && asset.type.startsWith('image/') && (
                       <button
                         onClick={() => setEditTarget(asset)}
                         className="p-1 text-white/30 hover:text-[#8b7ec8] transition-colors"
@@ -287,6 +311,43 @@ export function AssetManager(props: Partial<AssetManagerProps> = {}) {
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
                         </svg>
+                      </button>
+                    )}
+                    {/* 3D model: refine (PBR upgrade) + rig (skeleton + anims). */}
+                    {asset.type === 'model/gltf-binary' && onRefine3D && !asset.frameMetadata?.refined && !asset.frameMetadata?.rigged && (
+                      <button
+                        onClick={() => runModelOp(asset, onRefine3D)}
+                        disabled={busyAssetId === asset.id}
+                        className="p-1 text-white/30 hover:text-[#5db8a8] transition-colors disabled:opacity-40"
+                        title="Refine: upgrade to textured PBR model (20 credits)"
+                      >
+                        {busyAssetId === asset.id ? (
+                          <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 3a9 9 0 109 9" strokeLinecap="round" strokeWidth="2" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path d="M4 4v5h5M20 20v-5h-5M5.5 9A7 7 0 0118 7.5M18.5 15A7 7 0 016 16.5" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                          </svg>
+                        )}
+                      </button>
+                    )}
+                    {asset.type === 'model/gltf-binary' && onRig3D && !asset.frameMetadata?.rigged && (
+                      <button
+                        onClick={() => runModelOp(asset, onRig3D)}
+                        disabled={busyAssetId === asset.id}
+                        className="p-1 text-white/30 hover:text-[#c9a96e] transition-colors disabled:opacity-40"
+                        title="Rig: add humanoid skeleton + walk/run animations (25 credits)"
+                      >
+                        {busyAssetId === asset.id ? (
+                          <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 3a9 9 0 109 9" strokeLinecap="round" strokeWidth="2" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 2v4m0 0a3 3 0 100 6 3 3 0 000-6zm0 6v4m0 0l-4 6m4-6l4 6M6 9l-3 2m18-2l-3 2" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+                          </svg>
+                        )}
                       </button>
                     )}
                     <button

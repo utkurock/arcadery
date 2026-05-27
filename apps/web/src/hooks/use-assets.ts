@@ -311,6 +311,72 @@ export function useAssets(projectId: string, userId: string) {
     [],
   );
 
+  const refineModel = useCallback(async (assetId: string): Promise<Asset> => {
+    setError(null);
+    setUploading(true);
+    try {
+      const res = await fetch('/api/ai/model/refine', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assetId }),
+      });
+      const payload = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        if (res.status === 401 && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('arcadery:auth-required'));
+        }
+        if (res.status === 402 && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('arcadery:insufficient-credits', { detail: payload }));
+        }
+        const msg = typeof payload.error === 'string' ? payload.error : 'Refine failed';
+        setError(msg);
+        throw new Error(msg);
+      }
+      if ((payload as { pending?: boolean }).pending || !(payload as { asset?: Asset }).asset) {
+        throw new Error('Refine still in progress — check back in a minute');
+      }
+      const asset = (payload as { asset: Asset }).asset;
+      // Refine replaces the model in place — swap it in the list by id.
+      setAssets((prev) => prev.map((a) => (a.id === asset.id ? asset : a)));
+      return asset;
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const rigModel = useCallback(async (assetId: string): Promise<Asset> => {
+    setError(null);
+    setUploading(true);
+    try {
+      const res = await fetch('/api/ai/model/rig', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assetId }),
+      });
+      const payload = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        if (res.status === 401 && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('arcadery:auth-required'));
+        }
+        if (res.status === 402 && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('arcadery:insufficient-credits', { detail: payload }));
+        }
+        const msg = typeof payload.error === 'string' ? payload.error : 'Rigging failed';
+        setError(msg);
+        throw new Error(msg);
+      }
+      if ((payload as { pending?: boolean }).pending || !(payload as { asset?: Asset }).asset) {
+        throw new Error('Rigging still in progress — check back in a minute');
+      }
+      const asset = (payload as { asset: Asset }).asset;
+      // Rigging produces a NEW asset (source preserved) — prepend it.
+      setAssets((prev) => [asset, ...prev]);
+      return asset;
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
   const deleteAsset = useCallback(async (asset: Asset) => {
     setError(null);
     const supabase = createClient();
@@ -362,5 +428,5 @@ export function useAssets(projectId: string, userId: string) {
     loadAssets();
   }, [loadAssets]);
 
-  return { assets, uploading, error, loadAssets, uploadAsset, deleteAsset, generateAsset, generateModel, editAsset };
+  return { assets, uploading, error, loadAssets, uploadAsset, deleteAsset, generateAsset, generateModel, editAsset, refineModel, rigModel };
 }

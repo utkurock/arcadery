@@ -38,6 +38,10 @@ type MeshyTextToModelArgs = {
   mode?: 'preview' | 'refine';
   /** Existing preview task id when mode=refine */
   previewTaskId?: string;
+  /** Generate metallic/roughness/normal PBR maps during refine. */
+  enablePbr?: boolean;
+  /** Extra texturing guidance for the refine pass (max 600 chars). */
+  texturePrompt?: string;
 };
 
 type MeshyTaskStatus =
@@ -57,23 +61,48 @@ type MeshyTask = {
 };
 
 export async function startTextToModel(args: MeshyTextToModelArgs): Promise<string> {
+  const mode = args.mode ?? 'preview';
+  // Refine mode only takes the preview task id + texturing options — sending
+  // prompt/art_style on a refine request is rejected by Meshy.
+  const body =
+    mode === 'refine'
+      ? {
+          mode,
+          preview_task_id: args.previewTaskId,
+          enable_pbr: args.enablePbr ?? false,
+          texture_prompt: args.texturePrompt,
+        }
+      : {
+          mode,
+          prompt: args.prompt,
+          art_style: args.artStyle ?? 'cartoon',
+          negative_prompt: args.negativePrompt,
+        };
   const res = await fetch(`${MESHY_BASE}/openapi/v2/text-to-3d`, {
     method: 'POST',
     headers: { ...authHeader(), 'content-type': 'application/json' },
-    body: JSON.stringify({
-      mode: args.mode ?? 'preview',
-      prompt: args.prompt,
-      art_style: args.artStyle ?? 'cartoon',
-      negative_prompt: args.negativePrompt,
-      preview_task_id: args.previewTaskId,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Meshy text-to-3d start failed: ${res.status}`);
   const json = (await res.json()) as { result: string };
   return json.result;
 }
 
-async function getTask(taskId: string): Promise<MeshyTask> {
+/** Start a refine task that upgrades a completed preview to a textured PBR model. */
+export async function startRefine(
+  previewTaskId: string,
+  opts: { enablePbr?: boolean; texturePrompt?: string } = {},
+): Promise<string> {
+  return startTextToModel({
+    prompt: '',
+    mode: 'refine',
+    previewTaskId,
+    enablePbr: opts.enablePbr,
+    texturePrompt: opts.texturePrompt,
+  });
+}
+
+export async function getTask(taskId: string): Promise<MeshyTask> {
   const res = await fetch(`${MESHY_BASE}/openapi/v2/text-to-3d/${taskId}`, {
     headers: authHeader(),
   });
@@ -89,7 +118,7 @@ export async function waitForTask(
   const timeout = opts.timeoutMs ?? 80_000;
   const interval = opts.intervalMs ?? 4_000;
   const started = Date.now();
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     const t = await getTask(taskId);
     if (t.status === 'SUCCEEDED' || t.status === 'FAILED' || t.status === 'EXPIRED') {
@@ -108,4 +137,81 @@ export async function downloadGlb(url: string): Promise<Buffer> {
   if (!res.ok) throw new Error(`Failed to download GLB: ${res.status}`);
   const arr = await res.arrayBuffer();
   return Buffer.from(arr);
+}
+
+// ─── Rigging (humanoid skeleton + basic animation library) ─────────────────
+// POST /openapi/v1/rigging → { result: taskId }
+// GET  /openapi/v1/rigging/{id} → status + result.rigged_character_glb_url +
+//      result.basic_animations { walking_glb_url, running_glb_url, ... }
+
+export type MeshyBasicAnimations = {
+  walking_glb_url?: string;
+  walking_fbx_url?: string;
+  running_glb_url?: string;
+  running_fbx_url?: string;
+};
+
+export type MeshyRiggingTask = {
+  id: string;
+  status: MeshyTaskStatus;
+  progress: number;
+  result?: {
+    rigged_character_glb_url?: string;
+    rigged_character_fbx_url?: string;
+    basic_animations?: MeshyBasicAnimations;
+  };
+  error?: { message: string };
+};
+
+/**
+ * Start a rigging task. Prefer `inputTaskId` (a completed text-to-3d task) so
+ * Meshy rigs the source mesh directly; falls back to a public `modelUrl`.
+ */
+export async function startRigging(args: {
+  inputTaskId?: string;
+  modelUrl?: string;
+  heightMeters?: number;
+}): Promise<string> {
+  if (!args.inputTaskId && !args.modelUrl) {
+    throw new Error('startRigging needs inputTaskId or modelUrl');
+  }
+  const res = await fetch(`${MESHY_BASE}/openapi/v1/rigging`, {
+    method: 'POST',
+    headers: { ...authHeader(), 'content-type': 'application/json' },
+    body: JSON.stringify({
+      input_task_id: args.inputTaskId,
+      model_url: args.modelUrl,
+      height_meters: args.heightMeters ?? 1.7,
+    }),
+  });
+  if (!res.ok) throw new Error(`Meshy rigging start failed: ${res.status}`);
+  const json = (await res.json()) as { result: string };
+  return json.result;
+}
+
+export async function getRiggingTask(taskId: string): Promise<MeshyRiggingTask> {
+  const res = await fetch(`${MESHY_BASE}/openapi/v1/rigging/${taskId}`, {
+    headers: authHeader(),
+  });
+  if (!res.ok) throw new Error(`Meshy rigging fetch failed: ${res.status}`);
+  return (await res.json()) as MeshyRiggingTask;
+}
+
+/** Polls a rigging task until SUCCEEDED/FAILED/EXPIRED or timeoutMs. */
+export async function waitForRiggingTask(
+  taskId: string,
+  opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<MeshyRiggingTask> {
+  const timeout = opts.timeoutMs ?? 120_000;
+  const interval = opts.intervalMs ?? 5_000;
+  const started = Date.now();
+
+  for (;;) {
+    const t = await getRiggingTask(taskId);
+    if (t.status === 'SUCCEEDED' || t.status === 'FAILED' || t.status === 'EXPIRED') {
+      return t;
+    }
+    if (Date.now() - started > timeout) return t;
+    await new Promise((r) => setTimeout(r, interval));
+  }
 }

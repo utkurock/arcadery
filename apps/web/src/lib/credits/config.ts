@@ -43,6 +43,9 @@ export const AI_IMAGE_COST = 3;
 export const AI_SPRITE_SHEET_COST = 5;
 export const AI_ANIMATION_COST = 6;
 export const AI_IMAGE_EDIT_COST = 2;
+export const MODEL_PREVIEW_COST = 15;
+export const MODEL_REFINE_COST = 20; // PBR-textured upgrade of a preview
+export const MODEL_RIG_COST = 25; // humanoid rig + basic animation library
 export const TOKEN_LAUNCH_COST = 10;
 
 export type CreditReason =

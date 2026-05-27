@@ -1,4 +1,4 @@
-/* eslint-disable react/no-unknown-property */
+ 
 'use client';
 
 import { useMemo } from 'react';
@@ -127,7 +127,10 @@ function Line({
     ]);
   }, [from, to]);
   return (
-    <line frustumCulled={false} geometry={geo}>
+    // lineSegments (not <line>) — the JSX intrinsic `line` collides with the
+    // SVG line element in @types/react, so TS rejects three.js props on it.
+    // A single 2-point segment renders identically.
+    <lineSegments frustumCulled={false} geometry={geo}>
       <lineBasicMaterial
         color={color}
         transparent
@@ -135,6 +138,6 @@ function Line({
         depthWrite={false}
         depthTest={false}
       />
-    </line>
+    </lineSegments>
   );
 }

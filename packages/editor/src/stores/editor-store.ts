@@ -34,6 +34,27 @@ export const useEditorStore = create<EditorState>()(
       // toggle via the camera button in the toolbar.
       viewMode: '2d' as const,
 
+      savedPrefabs: [],
+      setSavedPrefabs: (list) => {
+        set((state) => {
+          state.savedPrefabs = list;
+        });
+      },
+      addSavedPrefab: (prefab) => {
+        set((state) => {
+          // De-dupe by id (re-save / hydrate races) and keep newest first.
+          state.savedPrefabs = [
+            prefab,
+            ...state.savedPrefabs.filter((p) => p.id !== prefab.id),
+          ];
+        });
+      },
+      removeSavedPrefab: (id) => {
+        set((state) => {
+          state.savedPrefabs = state.savedPrefabs.filter((p) => p.id !== id);
+        });
+      },
+
       addElement: (element) => {
         set((state) => {
           state.scene.elements[element.id] = element;

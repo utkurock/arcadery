@@ -1,4 +1,4 @@
-/* eslint-disable react/no-unknown-property */
+ 
 import { describe, it, expect, vi } from 'vitest';
 import ReactThreeTestRenderer from '@react-three/test-renderer';
 import * as THREE from 'three';

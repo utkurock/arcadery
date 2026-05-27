@@ -32,8 +32,10 @@ type Body = {
  * Generates a 3D model via Meshy text-to-3D, downloads the GLB, uploads to
  * Supabase storage, and inserts an asset row of type "model/gltf-binary".
  *
- * NOTE: Refine + rigging not yet wired — preview only in v1. Async polling on
- * client is supported via task_id when generation exceeds the function budget.
+ * This endpoint generates the PREVIEW model. Upgrading to a textured PBR model
+ * (refine) and adding a humanoid skeleton + animations (rig) are separate
+ * follow-up actions: POST /api/ai/model/refine and POST /api/ai/model/rig.
+ * When a preview exceeds the function budget the response is { pending, taskId }.
  */
 export async function POST(request: Request) {
   // Meshy is the most expensive AI call we make — keep this very tight.

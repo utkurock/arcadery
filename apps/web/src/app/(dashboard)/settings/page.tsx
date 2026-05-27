@@ -11,7 +11,6 @@ import {
   Copy,
   Check,
   Loader2,
-  ExternalLink,
   Sparkles,
   Upload,
   Trash2,
@@ -24,6 +23,7 @@ import { useModals } from '@/lib/ui/modals';
 import { PRICING_TIERS } from '@/lib/credits/config';
 import { notifyProfileUpdated } from '@/lib/auth/use-viewer';
 import { Avatar } from '@/components/ui/avatar';
+import { ClaimFeesModal } from '@/components/tokens/claim-fees-modal';
 
 const tabs = [
   { id: 'profile', label: 'Profile', icon: User },
@@ -353,6 +353,7 @@ type TokenizedGame = {
 
 function TokenEarnings({ userId }: { userId: string }) {
   const [games, setGames] = useState<TokenizedGame[] | null>(null);
+  const [claimGame, setClaimGame] = useState<TokenizedGame | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -387,9 +388,6 @@ function TokenEarnings({ userId }: { userId: string }) {
       ) : (
         <div className="space-y-2">
           {games.map((g) => {
-            const meteoraUrl = g.token_mint
-              ? `https://launch.meteora.ag/token/${g.token_mint}${cluster === 'devnet' ? '?cluster=devnet' : ''}`
-              : null;
             return (
               <div
                 key={g.id}
@@ -418,26 +416,36 @@ function TokenEarnings({ userId }: { userId: string }) {
                   >
                     Play
                   </Link>
-                  {meteoraUrl && (
-                    <Link
-                      href={meteoraUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 rounded-full bg-[#c9a96e]/15 px-3 py-1 text-xs font-semibold text-[#c9a96e] hover:bg-[#c9a96e]/25"
-                    >
-                      Manage
-                      <ExternalLink className="h-3 w-3" />
-                    </Link>
-                  )}
+                  <button
+                    onClick={() => setClaimGame(g)}
+                    className="inline-flex items-center gap-1 rounded-full bg-[#c9a96e]/15 px-3 py-1 text-xs font-semibold text-[#c9a96e] hover:bg-[#c9a96e]/25"
+                  >
+                    <Coins className="h-3 w-3" />
+                    Claim fees
+                  </button>
                 </div>
               </div>
             );
           })}
           <p className="mt-3 text-[11px] text-white/30 leading-relaxed">
-            Trading fees accrue automatically on Meteora. Click <strong>Manage</strong> to claim them and view live charts. Once your pool reaches{' '}
+            Your 70% share of trading fees accrues in SOL. Click <strong>Claim fees</strong> to
+            withdraw straight to your wallet. Once your pool reaches{' '}
             <strong>80 SOL</strong> raised, anyone can graduate it to AMM.
           </p>
         </div>
+      )}
+      {claimGame && (
+        <ClaimFeesModal
+          gameId={claimGame.id}
+          gameName={claimGame.name}
+          tokenSymbol={claimGame.token_symbol}
+          meteoraUrl={
+            claimGame.token_mint
+              ? `https://launch.meteora.ag/token/${claimGame.token_mint}${cluster === 'devnet' ? '?cluster=devnet' : ''}`
+              : null
+          }
+          onClose={() => setClaimGame(null)}
+        />
       )}
     </Section>
   );

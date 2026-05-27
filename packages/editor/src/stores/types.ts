@@ -13,6 +13,19 @@ import type {
 export type EditorPage = 'intro' | 'game' | 'end';
 
 /**
+ * A user-saved component (prefab): a named group of scene elements the user
+ * captured from their own scene to reuse later. Persisted server-side; the web
+ * app hydrates `savedPrefabs` and listens for save/delete window events.
+ */
+export interface SavedPrefab {
+  id: string;
+  name: string;
+  /** Engine the prefab was authored for ('2d' = phaser, '3d' = three). */
+  engine: '2d' | '3d';
+  elements: SceneElement[];
+}
+
+/**
  * Element attached to the AI chat panel (STORE-01).
  * Set by Phase 9 drag-to-chat; consumed by Phase 10 AICHAT-01/02/03.
  */
@@ -62,6 +75,13 @@ export interface AnimationRuntime {
 export interface EditorState {
   scene: GameScene;
   mode: 'edit' | 'play';
+
+  // User-saved components (prefabs). NOT part of undo history or scene — kept
+  // flat at the root and hydrated from the server by the web app.
+  savedPrefabs: SavedPrefab[];
+  setSavedPrefabs: (list: SavedPrefab[]) => void;
+  addSavedPrefab: (prefab: SavedPrefab) => void;
+  removeSavedPrefab: (id: string) => void;
 
   // Scene actions
   addElement: (element: SceneElement) => void;

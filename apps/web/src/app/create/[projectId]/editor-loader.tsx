@@ -4,12 +4,13 @@ import { useEffect, useRef, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useEditorStore } from '@arcadery/editor';
-import type { AssetManagerProps, AssetData } from '@arcadery/editor';
+import type { AssetManagerProps, AssetData, SavedPrefab } from '@arcadery/editor';
 import { useAutoSave } from '@/hooks/use-auto-save';
 import { useAssets } from '@/hooks/use-assets';
 import { ASSET_PACKS } from '@/lib/asset-packs';
 import { createClient } from '@/lib/supabase/client';
 import { generateSlug } from '@/lib/slugify';
+import { toast } from 'sonner';
 import type { Project } from './create-client';
 
 // Credits pill in the editor top-bar so the user can see their remaining
@@ -43,7 +44,7 @@ export function EditorLoader({ initialProject, initialPrompt }: { initialProject
   const saveStatus = useAutoSave(initialProject.id);
 
   const userId = initialProject.user_id;
-  const { assets, uploading, error, uploadAsset, deleteAsset, generateAsset, generateModel, editAsset } = useAssets(initialProject.id, userId);
+  const { assets, uploading, error, uploadAsset, deleteAsset, generateAsset, generateModel, editAsset, refineModel, rigModel } = useAssets(initialProject.id, userId);
 
   useEffect(() => {
     if (hydratedRef.current) return;
@@ -56,6 +57,59 @@ export function EditorLoader({ initialProject, initialPrompt }: { initialProject
       console.error('Failed to load scene into editor:', err);
     }
   }, [initialProject.scene]);
+
+  // Saved components (prefabs): hydrate from the server and bridge the editor's
+  // save/delete window events to the persistence API. The editor package is
+  // decoupled from data, so this loader owns the round-trip.
+  useEffect(() => {
+    if (userId === 'guest') return;
+    let active = true;
+
+    fetch('/api/prefabs')
+      .then((r) => (r.ok ? r.json() : { prefabs: [] }))
+      .then((json: { prefabs?: SavedPrefab[] }) => {
+        if (active) useEditorStore.getState().setSavedPrefabs(json.prefabs ?? []);
+      })
+      .catch(() => {});
+
+    const onSave = (e: Event) => {
+      const detail = (e as CustomEvent<{ name: string; engine: '2d' | '3d'; elements: unknown[] }>).detail;
+      if (!detail) return;
+      fetch('/api/prefabs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(detail),
+      })
+        .then(async (r) => {
+          const payload = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            if (r.status === 401) window.dispatchEvent(new CustomEvent('arcadery:auth-required'));
+            throw new Error(payload.error ?? 'Save failed');
+          }
+          return payload as { prefab: SavedPrefab };
+        })
+        .then(({ prefab }) => {
+          useEditorStore.getState().addSavedPrefab(prefab);
+          toast.success(`Saved “${prefab.name}” to your components`);
+        })
+        .catch((err) => toast.error(err instanceof Error ? err.message : 'Could not save component'));
+    };
+
+    const onDelete = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      if (!id) return;
+      // Store already removed it optimistically; just persist.
+      fetch(`/api/prefabs/${id}`, { method: 'DELETE' }).catch(() => {});
+    };
+
+    window.addEventListener('arcadery:save-prefab', onSave);
+    window.addEventListener('arcadery:delete-prefab', onDelete);
+    return () => {
+      active = false;
+      window.removeEventListener('arcadery:save-prefab', onSave);
+      window.removeEventListener('arcadery:delete-prefab', onDelete);
+    };
+  }, [userId]);
 
   const handleLogout = useCallback(async () => {
     const supabase = createClient();
@@ -91,6 +145,32 @@ export function EditorLoader({ initialProject, initialPrompt }: { initialProject
       await editAsset(asset.id, opts);
     },
     [editAsset],
+  );
+
+  const handleRefine3D = useCallback(
+    async (asset: AssetData) => {
+      const t = toast.loading('Refining model (textured PBR)… this can take a minute.');
+      try {
+        await refineModel(asset.id);
+        toast.success('Model refined', { id: t });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Refine failed', { id: t });
+      }
+    },
+    [refineModel],
+  );
+
+  const handleRig3D = useCallback(
+    async (asset: AssetData) => {
+      const t = toast.loading('Rigging model (skeleton + animations)… this can take a minute.');
+      try {
+        await rigModel(asset.id);
+        toast.success('Rigged model added to assets', { id: t });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Rigging failed', { id: t });
+      }
+    },
+    [rigModel],
   );
 
   const handleModifyAi = useCallback(
@@ -247,7 +327,9 @@ export function EditorLoader({ initialProject, initialPrompt }: { initialProject
     onGenerate: handleGenerate,
     onGenerate3D: handleGenerate3D,
     onEdit: handleEdit,
-  }), [assets, uploading, error, handleUpload, handleDelete, handleUseInScene, handleGenerate, handleGenerate3D, handleEdit]);
+    onRefine3D: handleRefine3D,
+    onRig3D: handleRig3D,
+  }), [assets, uploading, error, handleUpload, handleDelete, handleUseInScene, handleGenerate, handleGenerate3D, handleEdit, handleRefine3D, handleRig3D]);
 
   return (
     <>

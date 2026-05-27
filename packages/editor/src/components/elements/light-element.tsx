@@ -1,4 +1,4 @@
-/* eslint-disable react/no-unknown-property */
+ 
 'use client';
 
 import { useEditorStore } from '../../stores/editor-store';

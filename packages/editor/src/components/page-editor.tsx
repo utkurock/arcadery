@@ -8,7 +8,7 @@
  */
 
 import type { CSSProperties } from 'react';
-import { DoorOpen, Gamepad2, Trophy, Play } from 'lucide-react';
+import { DoorOpen, Gamepad2, Trophy, Play, ImageIcon, X } from 'lucide-react';
 import { INTRO_THEMES, type IntroTheme, type IntroConfig, type OutroConfig } from '@arcadery/shared';
 import { useEditorStore } from '../stores/editor-store';
 import type { EditorPage } from '../stores/types';
@@ -87,7 +87,15 @@ const DEFAULT_INTRO: IntroConfig = {
   ctaLabel: 'Play',
 };
 
-export function IntroPageEditor() {
+/** Image asset shape the intro backdrop picker consumes (subset of AssetData). */
+export interface IntroImageAsset {
+  id: string;
+  name: string;
+  url: string;
+  type: string;
+}
+
+export function IntroPageEditor({ imageAssets = [] }: { imageAssets?: IntroImageAsset[] }) {
   const intro = useEditorStore((s) => s.scene.intro) ?? DEFAULT_INTRO;
   const setIntro = useEditorStore((s) => s.setIntro);
   const sceneName = useEditorStore((s) => s.scene.name);
@@ -95,6 +103,7 @@ export function IntroPageEditor() {
 
   const theme = THEME_PREVIEW[intro.theme] ?? THEME_PREVIEW['arcade-neon'];
   const previewTitle = (intro.title || sceneName || 'Untitled Game').toUpperCase();
+  const backdrop = intro.backgroundImageUrl?.trim() || '';
 
   return (
     <div className="flex h-full w-full flex-col gap-6 overflow-y-auto p-6 lg:flex-row">
@@ -167,6 +176,61 @@ export function IntroPageEditor() {
             maxLength={20}
           />
         </div>
+
+        {/* Backdrop image — overrides the theme gradient behind the splash. */}
+        <div>
+          <span className={labelCls}>Backdrop image</span>
+          {backdrop ? (
+            <div className="mb-2 flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-2">
+              <img
+                src={backdrop}
+                alt="Intro backdrop"
+                className="h-12 w-16 shrink-0 rounded object-cover"
+              />
+              <span className="min-w-0 flex-1 truncate text-xs text-white/50">{backdrop}</span>
+              <button
+                onClick={() => update({ backgroundImageUrl: undefined })}
+                className="shrink-0 rounded-md p-1.5 text-white/40 transition-colors hover:bg-white/5 hover:text-white"
+                title="Remove backdrop"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <p className="mb-2 flex items-center gap-1.5 text-xs text-white/30">
+              <ImageIcon className="h-3.5 w-3.5" /> Theme gradient is used when no backdrop is set.
+            </p>
+          )}
+
+          {/* Pick from your generated / uploaded image assets. */}
+          {imageAssets.length > 0 && (
+            <div className="mb-2 grid max-h-40 grid-cols-4 gap-2 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.02] p-2">
+              {imageAssets.map((a) => {
+                const active = a.url === backdrop;
+                return (
+                  <button
+                    key={a.id}
+                    onClick={() => update({ backgroundImageUrl: a.url })}
+                    title={a.name}
+                    className={`relative aspect-square overflow-hidden rounded-md border transition-colors ${
+                      active ? 'border-[#8b7ec8] ring-1 ring-[#8b7ec8]' : 'border-white/10 hover:border-white/30'
+                    }`}
+                  >
+                    <img src={a.url} alt={a.name} className="h-full w-full object-cover" />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Manual URL fallback (e.g. paste an AI-generated image URL). */}
+          <input
+            value={backdrop}
+            onChange={(e) => update({ backgroundImageUrl: e.target.value || undefined })}
+            placeholder="…or paste an image URL"
+            className={fieldCls}
+          />
+        </div>
       </div>
 
       {/* Live preview */}
@@ -175,16 +239,29 @@ export function IntroPageEditor() {
           className="relative flex aspect-[4/3] w-full max-w-2xl flex-col items-center justify-center overflow-hidden rounded-2xl border border-white/10 px-8 text-center"
           style={{ background: theme.bg }}
         >
-          <h1 className="mb-3 text-4xl font-black tracking-tight sm:text-5xl" style={cssToObj(theme.title)}>
+          {backdrop && (
+            <div
+              className="absolute inset-0"
+              style={{
+                backgroundImage: `url(${backdrop})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+              }}
+            >
+              {/* Scrim so themed text stays legible over the photo. */}
+              <div className="absolute inset-0 bg-black/35" />
+            </div>
+          )}
+          <h1 className="relative z-10 mb-3 text-4xl font-black tracking-tight sm:text-5xl" style={cssToObj(theme.title)}>
             {previewTitle}
           </h1>
           {intro.subtitle && (
-            <p className="mb-7 max-w-sm text-sm" style={{ color: theme.sub }}>
+            <p className="relative z-10 mb-7 max-w-sm text-sm" style={{ color: theme.sub }}>
               {intro.subtitle}
             </p>
           )}
           <span
-            className="inline-flex items-center gap-2 rounded-2xl px-8 py-3.5 text-lg font-black"
+            className="relative z-10 inline-flex items-center gap-2 rounded-2xl px-8 py-3.5 text-lg font-black"
             style={cssToObj(theme.btn)}
           >
             <Play className="h-5 w-5 fill-current" />

@@ -1,5 +1,5 @@
 export { useEditorStore } from './stores/index';
-export type { EditorState } from './stores/index';
+export type { EditorState, SavedPrefab } from './stores/index';
 export { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts';
 
 // Layout & Toolbar

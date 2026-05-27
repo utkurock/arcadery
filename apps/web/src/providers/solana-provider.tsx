@@ -35,7 +35,7 @@ export function SolanaProvider({ children }: { children: ReactNode }) {
           // error during autoConnect (e.g. extension still booting) doesn't
           // surface as an unhandled rejection in production.
           if (process.env.NODE_ENV !== 'production') {
-            // eslint-disable-next-line no-console
+             
             console.debug('[wallet]', err.message);
           }
         }}

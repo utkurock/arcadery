@@ -1,4 +1,4 @@
-/* eslint-disable react/no-unknown-property */
+ 
 /**
  * Phase 8 SELECT-01 / SELECT-02 / SELECT-04 integration tests.
  *

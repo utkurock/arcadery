@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { useEditorStore } from '../stores/editor-store';
 import { setElementRef, getElementRef } from './element-refs';
 import type { ReactNode } from 'react';
-import type { ElementTransform } from '@arcadery/shared';
+import type { Transform } from '@arcadery/shared';
 
 /**
  * Universal Selection + Direct Manipulation.
@@ -84,7 +84,7 @@ export function Selectable({
   // and broke click-drag + the TransformControls gizmo.
   const transform = useEditorStore(
     (s) => s.scene.elements[id]?.transform,
-  ) as ElementTransform | undefined;
+  ) as Transform | undefined;
   const groupRef = useRef<THREE.Group>(null);
   const dragRef = useRef<DragState | null>(null);
   const { camera, gl } = useThree();

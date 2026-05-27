@@ -1,4 +1,4 @@
-/* eslint-disable react/no-unknown-property */
+ 
 import { describe, it, expect, beforeEach } from 'vitest';
 import ReactThreeTestRenderer from '@react-three/test-renderer';
 import { useEditorStore } from '../../stores/editor-store';
