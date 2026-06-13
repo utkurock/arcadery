@@ -1,12 +1,19 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Trophy, X } from 'lucide-react';
 import {
   LeaderboardModal,
   type LeaderboardConfig,
 } from '@/components/games/_shared/leaderboard-modal';
 import type { GameContext } from '@/components/games/_shared/entry-gate';
+import { gameAudio } from '@/components/games/_shared/audio';
+import {
+  MuteButton,
+  PauseButton,
+  PauseOverlay,
+  usePauseKey,
+} from '@/components/games/_shared/game-chrome';
 
 // Vector-style top-down arcade shooter. Render path:
 //   - Black background with a slow-moving parallax starfield.
@@ -54,6 +61,28 @@ interface Bullet {
   ttl: number;
 }
 
+type PowerUpKind = 'shield' | 'spread' | 'rapid';
+
+interface PowerUp {
+  pos: Vec2;
+  vel: Vec2;
+  kind: PowerUpKind;
+  ttl: number;
+}
+
+interface Ufo {
+  pos: Vec2;
+  vel: Vec2;
+  fireTimer: number;
+  wobble: number;
+}
+
+interface EnemyBullet {
+  pos: Vec2;
+  vel: Vec2;
+  ttl: number;
+}
+
 interface Particle {
   pos: Vec2;
   vel: Vec2;
@@ -77,6 +106,9 @@ interface GameUi {
   wave: number;
   highScore: number;
   combo: number;
+  shieldT: number;
+  spreadT: number;
+  rapidT: number;
 }
 
 const INITIAL_UI: GameUi = {
@@ -86,6 +118,9 @@ const INITIAL_UI: GameUi = {
   wave: 1,
   highScore: 0,
   combo: 0,
+  shieldT: 0,
+  spreadT: 0,
+  rapidT: 0,
 };
 
 interface NeonAsteroidsProps {
@@ -108,6 +143,10 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
   const [runId, setRunId] = useState(0);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const statusRef = useRef<GameUi['status']>('playing');
+  statusRef.current = ui.status;
   const gameStartRef = useRef<number>(performance.now());
   const inputRef = useRef({
     left: 0,
@@ -115,6 +154,19 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
     thrust: 0,
     shoot: 0,
   });
+
+  const setPausedBoth = useCallback((next: boolean) => {
+    pausedRef.current = next;
+    setPaused(next);
+  }, []);
+
+  usePauseKey(
+    useCallback(() => {
+      if (statusRef.current !== 'playing') return;
+      gameAudio.click();
+      setPausedBoth(!pausedRef.current);
+    }, [setPausedBoth]),
+  );
 
   // Submit score once the run ends. Only one submission per entry.
   useEffect(() => {
@@ -138,6 +190,8 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
   useEffect(() => {
     gameStartRef.current = performance.now();
     setSubmitted(false);
+    pausedRef.current = false;
+    setPaused(false);
   }, [runId]);
 
   useEffect(() => {
@@ -170,6 +224,8 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
     const bullets: Bullet[] = [];
     const particles: Particle[] = [];
     const stars: Star[] = [];
+    const powerUps: PowerUp[] = [];
+    const enemyBullets: EnemyBullet[] = [];
 
     for (let i = 0; i < 160; i++) {
       stars.push({
@@ -191,8 +247,24 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
     let comboCount = 0;
     let comboDecay = 0;
     let shake = 0;
+    // Power-up effect timers (seconds remaining).
+    let shieldTime = 0;
+    let spreadTime = 0;
+    let rapidTime = 0;
+    // Ship respawn countdown — dt-driven so pausing doesn't fast-forward it.
+    let respawnTimer = 0;
+    // Throttles the shoot sfx so rapid fire doesn't get grating.
+    let shootSfxCd = 0;
+    // UFO hunter — one scheduled appearance per wave starting at wave 3.
+    let ufo: Ufo | null = null;
+    let ufoSpawnAt = -1;
+    let waveClock = 0;
+
+    const comboMult = () => Math.min(5, 1 + Math.floor(comboCount / 4));
 
     const spawnWave = (w: number) => {
+      waveClock = 0;
+      ufoSpawnAt = w >= 3 ? 3 + Math.random() * 9 : -1;
       const count = 3 + w;
       for (let i = 0; i < count; i++) {
         let x: number;
@@ -211,12 +283,44 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
     };
     spawnWave(wave);
 
+    // Resolves a ship hit from any source (asteroid, UFO body, UFO bullet).
+    // A shield absorbs one collision; otherwise it costs a life.
+    const hitShip = () => {
+      if (!ship.alive || ship.invuln > 0) return;
+      if (shieldTime > 0) {
+        shieldTime = 0;
+        ship.invuln = 1.2;
+        shake = Math.max(shake, 10);
+        gameAudio.hit();
+        emitExplosion(particles, ship.pos, 190, 10);
+        return;
+      }
+      emitExplosion(particles, ship.pos, 200, 18);
+      shake = 18;
+      ship.alive = false;
+      lives -= 1;
+      comboCount = 0;
+      gameAudio.explosionBig();
+      if (lives > 0) {
+        gameAudio.hit();
+        respawnTimer = 0.9;
+      } else {
+        status = 'lost';
+        gameAudio.gameover();
+        highScore = Math.max(highScore, score);
+        try {
+          localStorage.setItem('arcadery:neon-asteroids:hs', String(highScore));
+        } catch {}
+      }
+    };
+
     // ─── Inputs ─────────────────────────────────────────────────────────
     const keys = new Set<string>();
     const onKeyDown = (e: KeyboardEvent) => {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
         e.preventDefault();
       }
+      gameAudio.unlock();
       keys.add(e.key.toLowerCase());
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -235,11 +339,29 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
       const dt = Math.min(0.05, (now - lastTime) / 1000);
       lastTime = now;
 
+      // Paused: leave the last rendered frame on screen and skip all
+      // simulation. `lastTime` keeps advancing so resume doesn't get a giant
+      // dt, and all timers are dt-driven so nothing fast-forwards.
+      if (pausedRef.current) return;
+
       const input = inputRef.current;
       const turnLeft = (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + input.left;
       const turnRight = (keys.has('d') || keys.has('arrowright') ? 1 : 0) + input.right;
       const thrust = (keys.has('w') || keys.has('arrowup') ? 1 : 0) + input.thrust;
       const shoot = (keys.has(' ') || keys.has('space') ? 1 : 0) + input.shoot;
+
+      // ─── Respawn countdown ───────────────────────────────────────────
+      if (!ship.alive && status === 'playing' && lives > 0) {
+        respawnTimer -= dt;
+        if (respawnTimer <= 0) {
+          ship.pos = { x: VIRT_W / 2, y: VIRT_H / 2 };
+          ship.vel = { x: 0, y: 0 };
+          ship.angle = -Math.PI / 2;
+          ship.angVel = 0;
+          ship.invuln = 2;
+          ship.alive = true;
+        }
+      }
 
       // ─── Ship physics ────────────────────────────────────────────────
       if (ship.alive && status === 'playing') {
@@ -286,22 +408,37 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
         ship.pos.y = wrap(ship.pos.y + ship.vel.y * dt, VIRT_H);
 
         ship.cooldown -= dt;
+        shootSfxCd -= dt;
         if (shoot > 0.1 && ship.cooldown <= 0) {
-          ship.cooldown = 0.18;
-          bullets.push({
-            pos: {
-              x: ship.pos.x + Math.cos(ship.angle) * 18,
-              y: ship.pos.y + Math.sin(ship.angle) * 18,
-            },
-            vel: {
-              x: ship.vel.x + Math.cos(ship.angle) * 620,
-              y: ship.vel.y + Math.sin(ship.angle) * 620,
-            },
-            ttl: 1.1,
-          });
+          ship.cooldown = rapidTime > 0 ? 0.09 : 0.18;
+          const angles = spreadTime > 0 ? [-0.22, 0, 0.22] : [0];
+          for (const off of angles) {
+            const ang = ship.angle + off;
+            bullets.push({
+              pos: {
+                x: ship.pos.x + Math.cos(ang) * 18,
+                y: ship.pos.y + Math.sin(ang) * 18,
+              },
+              vel: {
+                x: ship.vel.x + Math.cos(ang) * 620,
+                y: ship.vel.y + Math.sin(ang) * 620,
+              },
+              ttl: 1.1,
+            });
+          }
+          // Throttle the sfx to ~8/sec so rapid fire doesn't get grating.
+          if (shootSfxCd <= 0) {
+            shootSfxCd = 0.13;
+            gameAudio.shoot();
+          }
         }
         ship.invuln = Math.max(0, ship.invuln - dt);
       }
+
+      // ─── Power-up effect timers ──────────────────────────────────────
+      shieldTime = Math.max(0, shieldTime - dt);
+      spreadTime = Math.max(0, spreadTime - dt);
+      rapidTime = Math.max(0, rapidTime - dt);
 
       // ─── Bullets ─────────────────────────────────────────────────────
       for (let i = bullets.length - 1; i >= 0; i--) {
@@ -328,10 +465,13 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
             bullets.splice(j, 1);
             emitExplosion(particles, a.pos, a.hue, r);
             shake = Math.max(shake, r * 0.4);
+            gameAudio.explosionSmall();
+            const prevMult = comboMult();
             comboCount += 1;
             comboDecay = 2;
+            if (comboMult() > prevMult) gameAudio.combo(comboMult());
             const baseScore = a.size === 3 ? 20 : a.size === 2 ? 50 : 100;
-            score += baseScore * Math.min(5, 1 + Math.floor(comboCount / 4));
+            score += baseScore * comboMult();
             asteroids.splice(i, 1);
             if (a.size > 1) {
               const newSize = (a.size - 1) as 1 | 2;
@@ -340,6 +480,20 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
                 const angle = Math.random() * Math.PI * 2;
                 asteroids.push(makeAsteroid({ ...a.pos }, newSize, angle, speed));
               }
+            }
+            // Occasional power-up drop — drifts slowly and expires.
+            if (Math.random() < 0.09 && powerUps.length < 3) {
+              const kinds: PowerUpKind[] = ['shield', 'spread', 'rapid'];
+              const driftAng = Math.random() * Math.PI * 2;
+              powerUps.push({
+                pos: { ...a.pos },
+                vel: {
+                  x: Math.cos(driftAng) * (15 + Math.random() * 20),
+                  y: Math.sin(driftAng) * (15 + Math.random() * 20),
+                },
+                kind: kinds[Math.floor(Math.random() * kinds.length)],
+                ttl: 8,
+              });
             }
             killed = true;
             break;
@@ -353,36 +507,148 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
           ship.invuln <= 0 &&
           toroidalDist2(a.pos, ship.pos) < (r + 12) ** 2
         ) {
-          emitExplosion(particles, ship.pos, 200, 18);
-          shake = 18;
-          ship.alive = false;
-          lives -= 1;
-          comboCount = 0;
-          if (lives > 0) {
-            setTimeout(() => {
-              ship.pos = { x: VIRT_W / 2, y: VIRT_H / 2 };
-              ship.vel = { x: 0, y: 0 };
-              ship.angle = -Math.PI / 2;
-              ship.angVel = 0;
-              ship.invuln = 2;
-              ship.alive = true;
-            }, 900);
-          } else {
-            status = 'lost';
-            highScore = Math.max(highScore, score);
-            try {
-              localStorage.setItem('arcadery:neon-asteroids:hs', String(highScore));
-            } catch {}
-          }
+          hitShip();
         }
       }
 
       // Wave clear.
       if (asteroids.length === 0 && status === 'playing') {
         wave += 1;
+        gameAudio.levelup();
         // Reward a life every 3 waves, capped at 5.
         if (wave % 3 === 0 && lives < 5) lives += 1;
         spawnWave(wave);
+      }
+
+      // ─── Power-up pickups ───────────────────────────────────────────
+      for (let i = powerUps.length - 1; i >= 0; i--) {
+        const p = powerUps[i];
+        p.pos.x = wrap(p.pos.x + p.vel.x * dt, VIRT_W);
+        p.pos.y = wrap(p.pos.y + p.vel.y * dt, VIRT_H);
+        p.ttl -= dt;
+        if (p.ttl <= 0) {
+          powerUps.splice(i, 1);
+          continue;
+        }
+        if (
+          ship.alive &&
+          status === 'playing' &&
+          toroidalDist2(p.pos, ship.pos) < (12 + 14) ** 2
+        ) {
+          if (p.kind === 'shield') shieldTime = 12;
+          else if (p.kind === 'spread') spreadTime = 10;
+          else rapidTime = 10;
+          gameAudio.powerup();
+          emitExplosion(
+            particles,
+            p.pos,
+            p.kind === 'shield' ? 190 : p.kind === 'spread' ? 300 : 45,
+            8,
+          );
+          powerUps.splice(i, 1);
+        }
+      }
+
+      // ─── UFO hunter ─────────────────────────────────────────────────
+      waveClock += dt;
+      if (!ufo && ufoSpawnAt > 0 && waveClock >= ufoSpawnAt && status === 'playing') {
+        ufoSpawnAt = -1;
+        const fromLeft = Math.random() < 0.5;
+        ufo = {
+          pos: {
+            x: fromLeft ? -50 : VIRT_W + 50,
+            y: 80 + Math.random() * (VIRT_H - 160),
+          },
+          vel: { x: (fromLeft ? 1 : -1) * (85 + wave * 5), y: 0 },
+          fireTimer: 1.2,
+          wobble: Math.random() * Math.PI * 2,
+        };
+        gameAudio.alarm();
+      }
+      if (ufo) {
+        ufo.wobble += dt * 2;
+        ufo.pos.x += ufo.vel.x * dt;
+        ufo.pos.y += Math.sin(ufo.wobble) * 40 * dt;
+        // Despawn once it has crossed the field.
+        if (ufo.pos.x < -80 || ufo.pos.x > VIRT_W + 80) ufo = null;
+      }
+      if (ufo && ship.alive && status === 'playing') {
+        // Aimed (slightly inaccurate) shots at the player.
+        ufo.fireTimer -= dt;
+        if (ufo.fireTimer <= 0) {
+          ufo.fireTimer = 1.5 + Math.random() * 0.8;
+          const aim =
+            Math.atan2(ship.pos.y - ufo.pos.y, ship.pos.x - ufo.pos.x) +
+            (Math.random() - 0.5) * 0.45;
+          enemyBullets.push({
+            pos: { ...ufo.pos },
+            vel: { x: Math.cos(aim) * 250, y: Math.sin(aim) * 250 },
+            ttl: 3,
+          });
+          gameAudio.laser();
+        }
+      }
+      if (ufo) {
+        // Player bullets vs UFO — big points scaled by the combo multiplier.
+        for (let j = bullets.length - 1; j >= 0; j--) {
+          if (toroidalDist2(ufo.pos, bullets[j].pos) < (20 + 3) ** 2) {
+            bullets.splice(j, 1);
+            emitExplosion(particles, ufo.pos, 350, 24);
+            shake = Math.max(shake, 16);
+            score += 500 * comboMult();
+            comboCount += 1;
+            comboDecay = 2;
+            gameAudio.explosionBig();
+            ufo = null;
+            break;
+          }
+        }
+      }
+      if (
+        ufo &&
+        ship.alive &&
+        ship.invuln <= 0 &&
+        toroidalDist2(ufo.pos, ship.pos) < (20 + 12) ** 2
+      ) {
+        hitShip();
+      }
+
+      // ─── UFO bullets ────────────────────────────────────────────────
+      for (let i = enemyBullets.length - 1; i >= 0; i--) {
+        const b = enemyBullets[i];
+        b.pos.x += b.vel.x * dt;
+        b.pos.y += b.vel.y * dt;
+        b.ttl -= dt;
+        if (
+          b.ttl <= 0 ||
+          b.pos.x < -40 ||
+          b.pos.x > VIRT_W + 40 ||
+          b.pos.y < -40 ||
+          b.pos.y > VIRT_H + 40
+        ) {
+          enemyBullets.splice(i, 1);
+          continue;
+        }
+        // Player bullets can intercept UFO shots.
+        let blocked = false;
+        for (let j = bullets.length - 1; j >= 0; j--) {
+          if (toroidalDist2(b.pos, bullets[j].pos) < 8 ** 2) {
+            bullets.splice(j, 1);
+            enemyBullets.splice(i, 1);
+            emitExplosion(particles, b.pos, 0, 5);
+            blocked = true;
+            break;
+          }
+        }
+        if (blocked) continue;
+        if (
+          ship.alive &&
+          ship.invuln <= 0 &&
+          toroidalDist2(b.pos, ship.pos) < (4 + 12) ** 2
+        ) {
+          enemyBullets.splice(i, 1);
+          hitShip();
+        }
       }
 
       // ─── Particles ───────────────────────────────────────────────────
@@ -461,6 +727,92 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
         });
       }
 
+      // Power-up pickups — small glowing vector glyphs, blink near expiry.
+      for (const p of powerUps) {
+        const blink = p.ttl < 2 && Math.floor(p.ttl * 8) % 2 === 0;
+        if (blink) continue;
+        drawWrapped(ctx, p.pos, (px, py) => {
+          ctx.save();
+          ctx.translate(px, py);
+          const pulse = 1 + Math.sin(now / 180) * 0.12;
+          ctx.scale(pulse, pulse);
+          ctx.lineWidth = 2;
+          ctx.shadowBlur = 16;
+          if (p.kind === 'shield') {
+            ctx.shadowColor = '#22d3ee';
+            ctx.strokeStyle = '#67e8f9';
+            ctx.beginPath();
+            ctx.arc(0, 0, 9, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(0, 0, 4, 0, Math.PI * 2);
+            ctx.stroke();
+          } else if (p.kind === 'spread') {
+            ctx.shadowColor = '#e879f9';
+            ctx.strokeStyle = '#f0abfc';
+            ctx.beginPath();
+            for (const off of [-0.5, 0, 0.5]) {
+              ctx.moveTo(0, 5);
+              ctx.lineTo(Math.sin(off) * 9, -8);
+            }
+            ctx.stroke();
+          } else {
+            // Rapid fire — lightning bolt.
+            ctx.shadowColor = '#fbbf24';
+            ctx.strokeStyle = '#fde047';
+            ctx.beginPath();
+            ctx.moveTo(3, -9);
+            ctx.lineTo(-3, 1);
+            ctx.lineTo(2, 1);
+            ctx.lineTo(-3, 9);
+            ctx.stroke();
+          }
+          ctx.restore();
+        });
+      }
+
+      // UFO — classic saucer in hostile neon rose.
+      if (ufo) {
+        const u = ufo;
+        ctx.save();
+        ctx.translate(u.pos.x, u.pos.y);
+        ctx.shadowColor = '#fb7185';
+        ctx.shadowBlur = 18;
+        ctx.strokeStyle = '#fda4af';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(-20, 0);
+        ctx.lineTo(-8, -7);
+        ctx.lineTo(8, -7);
+        ctx.lineTo(20, 0);
+        ctx.lineTo(8, 7);
+        ctx.lineTo(-8, 7);
+        ctx.closePath();
+        ctx.stroke();
+        // Dome.
+        ctx.beginPath();
+        ctx.arc(0, -7, 6, Math.PI, 0);
+        ctx.stroke();
+        // Belly lights.
+        ctx.fillStyle = '#fecdd3';
+        for (const lx of [-12, 0, 12]) ctx.fillRect(lx - 1, -1, 2, 2);
+        ctx.restore();
+      }
+
+      // UFO bullets — hostile red streaks.
+      ctx.shadowColor = '#f87171';
+      ctx.shadowBlur = 14;
+      ctx.strokeStyle = '#fca5a5';
+      ctx.lineWidth = 2.5;
+      for (const b of enemyBullets) {
+        const trail = 6;
+        ctx.beginPath();
+        ctx.moveTo(b.pos.x - (b.vel.x / 250) * trail, b.pos.y - (b.vel.y / 250) * trail);
+        ctx.lineTo(b.pos.x, b.pos.y);
+        ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
+
       // Bullets — tiny streaks.
       ctx.shadowColor = '#fbbf24';
       ctx.shadowBlur = 14;
@@ -513,6 +865,18 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
               ctx.stroke();
             }
           }
+          // Shield bubble — absorbs one collision, blinks near expiry.
+          if (shieldTime > 0) {
+            const fade =
+              shieldTime < 3 && Math.floor(shieldTime * 8) % 2 === 0 ? 0.25 : 0.9;
+            ctx.shadowColor = '#22d3ee';
+            ctx.shadowBlur = 14;
+            ctx.strokeStyle = `rgba(103, 232, 249, ${fade})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, 22, 0, Math.PI * 2);
+            ctx.stroke();
+          }
           ctx.restore();
         });
       }
@@ -528,7 +892,10 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
           lives,
           wave,
           highScore: Math.max(highScore, score),
-          combo: Math.min(5, 1 + Math.floor(comboCount / 4)),
+          combo: comboMult(),
+          shieldT: shieldTime,
+          spreadT: spreadTime,
+          rapidT: rapidTime,
         });
       }
     };
@@ -552,9 +919,21 @@ export function NeonAsteroids({ gameContext, onExit }: NeonAsteroidsProps) {
           setRunId((n) => n + 1);
         }}
         onOpenLeaderboard={() => setShowLeaderboard(true)}
+        onPause={() => setPausedBoth(true)}
         onExit={onExit}
       />
       <MobileControls inputRef={inputRef} status={ui.status} />
+      <PauseOverlay
+        open={paused && ui.status === 'playing'}
+        onResume={() => setPausedBoth(false)}
+        onRestart={() => {
+          setUi(INITIAL_UI);
+          setRunId((n) => n + 1);
+        }}
+        onExit={onExit}
+        accentClass="bg-cyan-500 hover:bg-cyan-400"
+        hint="A · D rotate · W thrust · Space fire"
+      />
       <LeaderboardModal
         open={showLeaderboard}
         onClose={() => setShowLeaderboard(false)}
@@ -639,13 +1018,17 @@ function Hud({
   ui,
   onRestart,
   onOpenLeaderboard,
+  onPause,
   onExit,
 }: {
   ui: GameUi;
   onRestart: () => void;
   onOpenLeaderboard: () => void;
+  onPause: () => void;
   onExit?: () => void;
 }) {
+  const chipClass =
+    'pointer-events-auto inline-flex items-center justify-center rounded-md border border-cyan-300/30 bg-cyan-400/10 p-1.5 text-cyan-200 hover:bg-cyan-400/20';
   return (
     <>
       <div className="pointer-events-none absolute top-3 right-3 z-20 flex items-center gap-2 font-mono">
@@ -656,6 +1039,8 @@ function Hud({
         >
           <Trophy className="h-3.5 w-3.5" /> Leaderboard
         </button>
+        <MuteButton className={chipClass} />
+        {ui.status === 'playing' && <PauseButton onClick={onPause} className={chipClass} />}
         {onExit && (
           <button
             type="button"
@@ -685,6 +1070,15 @@ function Hud({
             {ui.highScore.toLocaleString()}
           </div>
         </div>
+        {ui.shieldT > 0 && (
+          <PowerChip label="SHIELD" t={ui.shieldT} max={12} barClass="bg-cyan-400" textClass="text-cyan-200" />
+        )}
+        {ui.spreadT > 0 && (
+          <PowerChip label="SPREAD" t={ui.spreadT} max={10} barClass="bg-fuchsia-400" textClass="text-fuchsia-200" />
+        )}
+        {ui.rapidT > 0 && (
+          <PowerChip label="RAPID" t={ui.rapidT} max={10} barClass="bg-amber-400" textClass="text-amber-200" />
+        )}
       </div>
       <div className="pointer-events-none absolute top-16 right-4 z-10 flex flex-col items-end gap-2 font-mono text-white">
         <div className="rounded-lg bg-black/60 backdrop-blur px-3 py-2 text-right">
@@ -738,6 +1132,32 @@ function Hud({
   );
 }
 
+function PowerChip({
+  label,
+  t,
+  max,
+  barClass,
+  textClass,
+}: {
+  label: string;
+  t: number;
+  max: number;
+  barClass: string;
+  textClass: string;
+}) {
+  return (
+    <div className="w-28 rounded-lg bg-black/60 backdrop-blur px-2.5 py-1.5">
+      <div className={`text-[9px] font-bold tracking-widest ${textClass}`}>{label}</div>
+      <div className="mt-1 h-1 overflow-hidden rounded-full bg-white/10">
+        <div
+          className={`h-full ${barClass}`}
+          style={{ width: `${Math.max(0, Math.min(100, (t / max) * 100))}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function MobileControls({
   inputRef,
   status,
@@ -752,6 +1172,7 @@ function MobileControls({
 }) {
   if (status !== 'playing') return null;
   const press = (key: 'left' | 'right' | 'thrust' | 'shoot', v: number) => {
+    if (v > 0) gameAudio.unlock();
     if (inputRef.current) inputRef.current[key] = v;
   };
   const Btn = ({

@@ -12,6 +12,13 @@ import {
 } from './car';
 import { createAiState, updateAi, progressForPosition } from './ai';
 import { SkidTrail } from './skid-trail';
+import { gameAudio } from '@/components/games/_shared/audio';
+import {
+  MuteButton,
+  PauseButton,
+  PauseOverlay,
+  usePauseKey,
+} from '@/components/games/_shared/game-chrome';
 import {
   DRIFT_REWARD_AMOUNTS,
   publicRewardMint,
@@ -76,6 +83,26 @@ export function DriftRacer({ raceContext, onExit }: DriftRacerProps = {}) {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[] | null>(null);
   const submittedKeyRef = useRef<string | null>(null);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const statusRef = useRef<RaceUiState['status']>('idle');
+  statusRef.current = ui.status;
+
+  const setPausedBoth = useCallback((next: boolean) => {
+    pausedRef.current = next;
+    setPaused(next);
+  }, []);
+
+  // Esc/P toggles pause, but only mid-race — not during countdown or the
+  // end screens. Race timing accumulates dt per frame, so frozen frames
+  // simply don't count toward lap times.
+  usePauseKey(
+    useCallback(() => {
+      if (statusRef.current !== 'racing') return;
+      gameAudio.click();
+      setPausedBoth(!pausedRef.current);
+    }, [setPausedBoth]),
+  );
 
   // Inputs live in a ref so the mobile touch UI can mutate them without
   // forcing a re-render of the canvas.
@@ -286,6 +313,7 @@ export function DriftRacer({ raceContext, onExit }: DriftRacerProps = {}) {
       ) {
         e.preventDefault();
       }
+      gameAudio.unlock();
       keysDown.add(e.key.toLowerCase());
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -307,8 +335,10 @@ export function DriftRacer({ raceContext, onExit }: DriftRacerProps = {}) {
     // ─── Game state machine ─────────────────────────────────────────────
     let raceStatus: 'countdown' | 'racing' | 'won' | 'lost' = 'countdown';
     let countdownRemaining = 3.5;
+    let countdownDisplayed = Math.ceil(countdownRemaining);
     const lapTimes: number[] = [];
     let lastLapTime = 0;
+    let lastScreechAt = 0;
     let lastUiPush = 0;
     let lastFrameTime = performance.now();
     let raf = 0;
@@ -319,6 +349,15 @@ export function DriftRacer({ raceContext, onExit }: DriftRacerProps = {}) {
       lastFrameTime = now;
       // Clamp dt to keep the sim stable when the tab regains focus after a pause.
       const dt = Math.min(0.05, dtRaw);
+
+      // Paused: render the frozen frame and skip all simulation. raceTime
+      // accumulates dt per simulated frame, so skipped frames never count
+      // toward lap times, and `lastFrameTime` keeps advancing so resume
+      // doesn't produce a giant dt.
+      if (pausedRef.current) {
+        renderer.render(scene, camera);
+        return;
+      }
 
       // ─── Read inputs ────────────────────────────────────────────────
       const keys = inputRef.current;
@@ -357,10 +396,16 @@ export function DriftRacer({ raceContext, onExit }: DriftRacerProps = {}) {
       // ─── Countdown ──────────────────────────────────────────────────
       if (raceStatus === 'countdown') {
         countdownRemaining -= dt;
+        const displayed = Math.max(0, Math.ceil(countdownRemaining));
+        if (displayed < countdownDisplayed) {
+          countdownDisplayed = displayed;
+          if (displayed > 0) gameAudio.tick();
+        }
         if (countdownRemaining <= 0) {
           raceStatus = 'racing';
           playerCar.raceTime = 0;
           aiCar.raceTime = 0;
+          gameAudio.levelup();
         }
       }
 
@@ -376,7 +421,9 @@ export function DriftRacer({ raceContext, onExit }: DriftRacerProps = {}) {
       if (raceStatus === 'racing') {
         if (prevHint > track.segmentCount - 15 && playerProgressHint < 15) {
           const t = playerCar.raceTime;
-          lapTimes.push(t - lastLapTime);
+          const lapTime = t - lastLapTime;
+          const isBestLap = lapTimes.length > 0 && lapTime < Math.min(...lapTimes);
+          lapTimes.push(lapTime);
           lastLapTime = t;
           playerCar.laps += 1;
           if (playerCar.laps >= TOTAL_LAPS) {
@@ -384,6 +431,11 @@ export function DriftRacer({ raceContext, onExit }: DriftRacerProps = {}) {
             const aiTotalProgress =
               aiCar.laps + ai.progressIndex / track.segmentCount;
             raceStatus = aiTotalProgress >= TOTAL_LAPS ? 'lost' : 'won';
+            if (raceStatus === 'won') gameAudio.victory();
+            else gameAudio.gameover();
+          } else {
+            gameAudio.levelup();
+            if (isBestLap) gameAudio.coin();
           }
         }
         playerCar.raceTime += dt;
@@ -395,7 +447,15 @@ export function DriftRacer({ raceContext, onExit }: DriftRacerProps = {}) {
           aiCar.laps += 1;
           if (aiCar.laps >= TOTAL_LAPS && raceStatus === 'racing') {
             raceStatus = 'lost';
+            gameAudio.gameover();
           }
+        }
+
+        // Drift screech — short throttled noise bursts instead of a
+        // per-frame loop so the mixer doesn't pile up sources.
+        if (playerCar.currentDriftSec > 0.05 && now - lastScreechAt > 150) {
+          lastScreechAt = now;
+          gameAudio.noise({ duration: 0.2, volume: 0.07, filterFreq: 2600, filterTo: 1800 });
         }
       }
 
@@ -589,10 +649,12 @@ export function DriftRacer({ raceContext, onExit }: DriftRacerProps = {}) {
   }, [runId]);
 
   const restart = () => {
+    gameAudio.click();
     setUi(INITIAL_UI);
     setRunId((n) => n + 1);
     setScoreId(null);
     setSubmitError(null);
+    setPausedBoth(false);
     submittedKeyRef.current = null;
   };
 
@@ -678,6 +740,11 @@ export function DriftRacer({ raceContext, onExit }: DriftRacerProps = {}) {
         ui={ui}
         onRestart={restart}
         onExit={onExit}
+        onPause={() => {
+          gameAudio.unlock();
+          gameAudio.click();
+          setPausedBoth(true);
+        }}
         raceContext={raceContext}
         scoreId={scoreId}
         submitting={submitting}
@@ -687,6 +754,14 @@ export function DriftRacer({ raceContext, onExit }: DriftRacerProps = {}) {
       {touch && ui.status === 'racing' && (
         <MobileControls inputRef={inputRef} />
       )}
+      <PauseOverlay
+        open={paused && ui.status === 'racing'}
+        onResume={() => setPausedBoth(false)}
+        onRestart={restart}
+        onExit={onExit}
+        accentClass="bg-rose-600 hover:bg-rose-500"
+        hint="WASD drive · Space = handbrake"
+      />
     </div>
   );
 }
@@ -711,6 +786,7 @@ function Hud({
   ui,
   onRestart,
   onExit,
+  onPause,
   raceContext,
   scoreId,
   submitting,
@@ -720,14 +796,23 @@ function Hud({
   ui: RaceUiState;
   onRestart: () => void;
   onExit?: () => void;
+  onPause: () => void;
   raceContext?: DriftRaceContext;
   scoreId: string | null;
   submitting: boolean;
   submitError: string | null;
   leaderboard: LeaderboardEntry[] | null;
 }) {
+  const chipClass =
+    'pointer-events-auto inline-flex items-center justify-center rounded-md border border-white/15 bg-black/55 backdrop-blur p-1.5 text-white/80 hover:bg-white/15';
   return (
     <>
+      {/* Top-right chrome: mute + pause */}
+      <div className="pointer-events-none absolute top-3 right-3 z-20 flex items-center gap-2 font-mono">
+        <MuteButton className={chipClass} />
+        {ui.status === 'racing' && <PauseButton onClick={onPause} className={chipClass} />}
+      </div>
+
       {/* Top-left: lap, time, position */}
       <div className="pointer-events-none absolute top-16 left-4 z-10 flex flex-col gap-2 font-mono text-white">
         <div className="rounded-lg bg-black/55 backdrop-blur px-3 py-2">
@@ -989,6 +1074,7 @@ function ClaimSection({
 
   const onClaim = async () => {
     if (!scoreId || claiming) return;
+    gameAudio.click();
     setClaiming(true);
     setError(null);
     try {
@@ -1095,6 +1181,7 @@ function MobileControls({
   } | null>;
 }) {
   const press = (key: 'throttle' | 'brake' | 'steerLeft' | 'steerRight' | 'handbrake', v: number) => {
+    if (v > 0) gameAudio.unlock();
     if (inputRef.current) inputRef.current[key] = v;
   };
   const Btn = ({

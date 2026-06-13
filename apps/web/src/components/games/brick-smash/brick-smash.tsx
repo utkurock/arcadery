@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Trophy, X } from 'lucide-react';
 import {
@@ -8,6 +8,13 @@ import {
   type LeaderboardConfig,
 } from '@/components/games/_shared/leaderboard-modal';
 import type { GameContext } from '@/components/games/_shared/entry-gate';
+import { gameAudio } from '@/components/games/_shared/audio';
+import {
+  MuteButton,
+  PauseButton,
+  PauseOverlay,
+  usePauseKey,
+} from '@/components/games/_shared/game-chrome';
 
 // Modern 3D breakout. The play field is a flat box: paddle slides along -Z
 // edge, ball bounces between walls and brick wall along +Z. Each level adds
@@ -32,6 +39,12 @@ interface GameUi {
   level: number;
   bricksLeft: number;
   highScore: number;
+  bricksDestroyed: number;
+  /** Active power-up indicators: seconds remaining (or catches for sticky). */
+  wideS: number;
+  slowS: number;
+  laserS: number;
+  stickyN: number;
 }
 
 const INITIAL_UI: GameUi = {
@@ -41,6 +54,11 @@ const INITIAL_UI: GameUi = {
   level: 1,
   bricksLeft: 0,
   highScore: 0,
+  bricksDestroyed: 0,
+  wideS: 0,
+  slowS: 0,
+  laserS: 0,
+  stickyN: 0,
 };
 
 interface Brick {
@@ -61,12 +79,14 @@ interface Ball {
   vel: THREE.Vector3;
   /** When true the ball is glued to the paddle until launched. */
   stuck: boolean;
+  /** Where on the paddle the ball sits while stuck (sticky catches keep it). */
+  offsetX: number;
 }
 
 interface PowerUp {
   mesh: THREE.Mesh;
   pos: THREE.Vector3;
-  kind: 'wide' | 'multi' | 'slow';
+  kind: 'wide' | 'multi' | 'slow' | 'laser' | 'sticky';
 }
 
 const BRICK_PALETTE: Array<[number, number, number]> = [
@@ -99,8 +119,25 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
   const [runId, setRunId] = useState(0);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const statusRef = useRef<GameUi['status']>('playing');
+  statusRef.current = ui.status;
   const gameStartRef = useRef<number>(performance.now());
   const inputRef = useRef({ paddleX: 0, mouseControl: false, launch: 0 });
+
+  const setPausedBoth = useCallback((next: boolean) => {
+    pausedRef.current = next;
+    setPaused(next);
+  }, []);
+
+  usePauseKey(
+    useCallback(() => {
+      if (statusRef.current !== 'playing') return;
+      gameAudio.click();
+      setPausedBoth(!pausedRef.current);
+    }, [setPausedBoth]),
+  );
 
   useEffect(() => {
     if ((ui.status !== 'won' && ui.status !== 'lost') || submitted) return;
@@ -113,19 +150,19 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
         wallet: gameContext.wallet,
         score: ui.score,
         levelReached: ui.level,
-        // Derived from ledger — we don't track bricksDestroyed separately so
-        // send 0 for now. Future revision: count destroy events directly.
-        bricksDestroyed: 0,
+        bricksDestroyed: ui.bricksDestroyed,
         durationSec,
         won: ui.status === 'won',
         entrySignature: gameContext.entrySignature,
       }),
     }).catch((err) => console.warn('brick-smash score submit failed', err));
-  }, [ui.status, ui.score, ui.level, submitted, gameContext]);
+  }, [ui.status, ui.score, ui.level, ui.bricksDestroyed, submitted, gameContext]);
 
   useEffect(() => {
     gameStartRef.current = performance.now();
     setSubmitted(false);
+    pausedRef.current = false;
+    setPaused(false);
   }, [runId]);
 
   useEffect(() => {
@@ -318,6 +355,7 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
         pos: startPos,
         vel: new THREE.Vector3(0, 0, 0),
         stuck,
+        offsetX: 0,
       });
     };
 
@@ -341,8 +379,27 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
         emissive: 0x16a34a,
         emissiveIntensity: 1.0,
       }),
+      laser: new THREE.MeshStandardMaterial({
+        color: 0xf87171,
+        emissive: 0xdc2626,
+        emissiveIntensity: 1.0,
+      }),
+      sticky: new THREE.MeshStandardMaterial({
+        color: 0xa3e635,
+        emissive: 0x65a30d,
+        emissiveIntensity: 1.0,
+      }),
     };
     const powerUpGeo = new THREE.OctahedronGeometry(0.35, 0);
+
+    // Laser bolts fired by the laser-paddle power-up.
+    const bolts: { mesh: THREE.Mesh }[] = [];
+    const boltGeo = new THREE.BoxGeometry(0.12, 0.12, 0.7);
+    const boltMat = new THREE.MeshStandardMaterial({
+      color: 0xff6b6b,
+      emissive: 0xef4444,
+      emissiveIntensity: 1.4,
+    });
 
     // Particle pool for brick destruction.
     const particles: { mesh: THREE.Mesh; vel: THREE.Vector3; ttl: number; maxTtl: number }[] = [];
@@ -353,15 +410,65 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
     let status: 'playing' | 'won' | 'lost' = 'playing';
     let wideTimer = 0;
     let slowTimer = 0;
+    let laserTimer = 0;
+    let laserCooldown = 0;
+    let stickyCatches = 0;
+    let bricksDestroyed = 0;
     let bestScore = 0;
     try {
       bestScore = Number(localStorage.getItem('arcadery:brick-smash:hs') ?? 0);
     } catch {}
 
+    // Sfx throttles — multi-ball chaos can hit dozens of bricks per second.
+    let lastBrickSfx = 0;
+    let lastBounceSfx = 0;
+    const wallBounceSfx = (now: number) => {
+      if (now - lastBounceSfx < 60) return;
+      lastBounceSfx = now;
+      gameAudio.tone({ freq: 240, type: 'triangle', duration: 0.05, volume: 0.07 });
+    };
+
+    /** Deal 1 HP of damage to bricks[i]; handles score, drops, sfx, particles. */
+    const damageBrick = (i: number, now: number): boolean => {
+      const br = bricks[i];
+      br.hp -= 1;
+      if (br.hp <= 0) {
+        scene.remove(br.mesh);
+        bricks.splice(i, 1);
+        score += br.scoreValue;
+        bricksDestroyed += 1;
+        emitBurst(scene, particles, br.mesh.position, (br.mesh.material as THREE.MeshStandardMaterial).color);
+        if (now - lastBrickSfx > 100) {
+          lastBrickSfx = now;
+          gameAudio.crumble();
+        }
+        // 12% chance to drop a power-up.
+        if (Math.random() < 0.12) {
+          const kinds: PowerUp['kind'][] = ['wide', 'multi', 'slow', 'laser', 'sticky'];
+          const k = kinds[Math.floor(Math.random() * kinds.length)];
+          const m = new THREE.Mesh(powerUpGeo, powerUpMats[k]);
+          m.position.copy(br.mesh.position);
+          m.castShadow = true;
+          scene.add(m);
+          powerUps.push({ mesh: m, pos: m.position.clone(), kind: k });
+        }
+        return true;
+      }
+      // Damage tint — darken the brick a bit so multi-hit shows.
+      const mat = br.mesh.material as THREE.MeshStandardMaterial;
+      mat.color.multiplyScalar(0.82);
+      if (now - lastBrickSfx > 100) {
+        lastBrickSfx = now;
+        gameAudio.tick();
+      }
+      return false;
+    };
+
     // ─── Inputs ─────────────────────────────────────────────────────────
     const keys = new Set<string>();
     const onKeyDown = (e: KeyboardEvent) => {
       if (['ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+      gameAudio.unlock();
       keys.add(e.key.toLowerCase());
     };
     const onKeyUp = (e: KeyboardEvent) => keys.delete(e.key.toLowerCase());
@@ -380,6 +487,7 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
       inputRef.current.mouseControl = true;
     };
     const onMouseDown = () => {
+      gameAudio.unlock();
       inputRef.current.launch = 1;
     };
     renderer.domElement.addEventListener('mousemove', onMouseMove);
@@ -403,6 +511,14 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
       raf = requestAnimationFrame(tick);
       const dt = Math.min(0.05, (now - lastTime) / 1000);
       lastTime = now;
+
+      // Paused: keep rendering the frozen scene, skip all simulation.
+      // `lastTime` keeps advancing so resume doesn't get a giant dt — and all
+      // power-up timers are dt-accumulated, so they freeze too.
+      if (pausedRef.current) {
+        renderer.render(scene, camera);
+        return;
+      }
 
       const input = inputRef.current;
       // Paddle X: prefer mouse if it's been used; otherwise keyboard.
@@ -428,6 +544,13 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
       }
       wideTimer = Math.max(0, wideTimer - dt);
       slowTimer = Math.max(0, slowTimer - dt);
+      laserTimer = Math.max(0, laserTimer - dt);
+
+      // Paddle accent reflects the active special: red for laser, green for sticky.
+      const accentColor = laserTimer > 0 ? 0xf87171 : stickyCatches > 0 ? 0x4ade80 : 0x67e8f9;
+      const accentEmissive = laserTimer > 0 ? 0xb91c1c : stickyCatches > 0 ? 0x15803d : 0x0e7490;
+      paddleMat.color.setHex(accentColor);
+      paddleMat.emissive.setHex(accentEmissive);
 
       const launchPressed = keys.has(' ') || keys.has('space') || input.launch > 0;
       input.launch = 0;
@@ -438,23 +561,23 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
         for (let bi = balls.length - 1; bi >= 0; bi--) {
           const b = balls[bi];
           if (b.stuck) {
-            b.pos.x = paddle.position.x;
+            b.pos.x =
+              paddle.position.x +
+              THREE.MathUtils.clamp(b.offsetX, -paddleWidth / 2, paddleWidth / 2);
             b.pos.z = paddle.position.z + 0.8;
             b.pos.y = BALL_R + 0.4;
             if (launchPressed) {
               b.stuck = false;
-              const angle = Math.PI / 3; // 60° up-field
               const speed = 12;
-              b.vel.set(
-                Math.sin(0) * speed,
-                0,
-                Math.cos(0) * speed * 0.9 + speed * 0.1,
-              );
-              // Slight randomized angle so it isn't a perfect column.
-              const tilt = (Math.random() - 0.5) * 0.4;
-              b.vel.x = Math.sin(tilt) * speed;
-              b.vel.z = Math.cos(tilt) * speed;
-              void angle;
+              // Sticky catches keep the catch offset so the player can aim;
+              // fresh serves get a slight random tilt instead.
+              const tilt =
+                b.offsetX !== 0
+                  ? THREE.MathUtils.clamp((b.offsetX / (paddleWidth / 2)) * 0.8, -0.8, 0.8)
+                  : (Math.random() - 0.5) * 0.4;
+              b.vel.set(Math.sin(tilt) * speed, 0, Math.cos(tilt) * speed);
+              b.offsetX = 0;
+              gameAudio.tone({ freq: 440, freqTo: 700, type: 'square', duration: 0.1, volume: 0.12 });
             }
             continue;
           }
@@ -470,13 +593,16 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
             if (b.pos.x < -FIELD_W / 2 + BALL_R) {
               b.pos.x = -FIELD_W / 2 + BALL_R;
               b.vel.x = Math.abs(b.vel.x);
+              wallBounceSfx(now);
             } else if (b.pos.x > FIELD_W / 2 - BALL_R) {
               b.pos.x = FIELD_W / 2 - BALL_R;
               b.vel.x = -Math.abs(b.vel.x);
+              wallBounceSfx(now);
             }
             if (b.pos.z > FIELD_D / 2 - BALL_R) {
               b.pos.z = FIELD_D / 2 - BALL_R;
               b.vel.z = -Math.abs(b.vel.z);
+              wallBounceSfx(now);
             }
 
             // Paddle bounce — only when ball is travelling toward the paddle
@@ -492,6 +618,20 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
               b.pos.z > paddleMinZ &&
               b.pos.z < paddleMaxZ
             ) {
+              if (stickyCatches > 0) {
+                // Sticky paddle: catch the ball; relaunch aims from the
+                // catch offset (same input as the initial launch).
+                stickyCatches -= 1;
+                b.stuck = true;
+                b.offsetX = THREE.MathUtils.clamp(
+                  b.pos.x - paddle.position.x,
+                  -paddleWidth / 2,
+                  paddleWidth / 2,
+                );
+                b.vel.set(0, 0, 0);
+                gameAudio.tone({ freq: 500, freqTo: 750, type: 'sine', duration: 0.1, volume: 0.12 });
+                break;
+              }
               b.pos.z = paddleMaxZ;
               const hitOffset = (b.pos.x - paddle.position.x) / (paddleWidth / 2);
               const speed = Math.max(12, b.vel.length());
@@ -499,6 +639,13 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
               const angle = THREE.MathUtils.clamp(hitOffset * 0.8, -0.8, 0.8);
               b.vel.x = Math.sin(angle) * speed;
               b.vel.z = Math.cos(angle) * speed;
+              // Bounce pitch varies with the hit position — edges ring higher.
+              gameAudio.tone({
+                freq: 400 + THREE.MathUtils.clamp(hitOffset, -1, 1) * 100,
+                type: 'square',
+                duration: 0.06,
+                volume: 0.12,
+              });
             }
 
             // Brick collisions (AABB sweep — check each brick).
@@ -527,27 +674,7 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
                   b.vel.z = -b.vel.z;
                   b.pos.z += b.vel.z > 0 ? penZ : -penZ;
                 }
-                br.hp -= 1;
-                if (br.hp <= 0) {
-                  scene.remove(br.mesh);
-                  bricks.splice(i, 1);
-                  score += br.scoreValue;
-                  emitBurst(scene, particles, br.mesh.position, (br.mesh.material as THREE.MeshStandardMaterial).color);
-                  // 12% chance to drop a power-up.
-                  if (Math.random() < 0.12) {
-                    const kinds: PowerUp['kind'][] = ['wide', 'multi', 'slow'];
-                    const k = kinds[Math.floor(Math.random() * kinds.length)];
-                    const m = new THREE.Mesh(powerUpGeo, powerUpMats[k]);
-                    m.position.copy(br.mesh.position);
-                    m.castShadow = true;
-                    scene.add(m);
-                    powerUps.push({ mesh: m, pos: m.position.clone(), kind: k });
-                  }
-                } else {
-                  // Damage tint — darken the brick a bit so multi-hit shows.
-                  const mat = br.mesh.material as THREE.MeshStandardMaterial;
-                  mat.color.multiplyScalar(0.82);
-                }
+                damageBrick(i, now);
                 break;
               }
             }
@@ -558,10 +685,12 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
             scene.remove(ballMeshes[bi]);
             ballMeshes.splice(bi, 1);
             balls.splice(bi, 1);
+            gameAudio.hit();
             if (balls.length === 0) {
               lives -= 1;
               if (lives <= 0) {
                 status = 'lost';
+                gameAudio.gameover();
                 bestScore = Math.max(bestScore, score);
                 try {
                   localStorage.setItem('arcadery:brick-smash:hs', String(bestScore));
@@ -587,6 +716,7 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
             Math.abs(p.pos.x - paddle.position.x) < paddleWidth / 2 + 0.4
           ) {
             applyPowerUp(p.kind);
+            gameAudio.powerup();
             scene.remove(p.mesh);
             powerUps.splice(i, 1);
           } else if (p.pos.z < -FIELD_D / 2) {
@@ -598,6 +728,10 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
         function applyPowerUp(kind: PowerUp['kind']) {
           if (kind === 'wide') wideTimer = 12;
           else if (kind === 'slow') slowTimer = 8;
+          else if (kind === 'laser') {
+            laserTimer = 8;
+            laserCooldown = 0;
+          } else if (kind === 'sticky') stickyCatches = 3;
           else if (kind === 'multi') {
             // Split each ball in two.
             const existing = [...balls];
@@ -608,6 +742,7 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
                   pos: orig.pos.clone(),
                   vel: orig.vel.clone(),
                   stuck: false,
+                  offsetX: 0,
                 };
                 const angle = (i === 0 ? 1 : -1) * 0.5;
                 const speed = newBall.vel.length();
@@ -626,21 +761,67 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
           }
         }
 
+        // Laser paddle — fire twin bolts on a fixed cadence while active.
+        if (laserTimer > 0) {
+          laserCooldown -= dt;
+          if (laserCooldown <= 0) {
+            laserCooldown = 0.5;
+            for (const side of [-1, 1]) {
+              const m = new THREE.Mesh(boltGeo, boltMat);
+              m.position.set(
+                paddle.position.x + side * (paddleWidth / 2 - 0.2),
+                0.35,
+                paddle.position.z + PADDLE_D,
+              );
+              scene.add(m);
+              bolts.push({ mesh: m });
+            }
+            gameAudio.laser();
+          }
+        }
+        for (let i = bolts.length - 1; i >= 0; i--) {
+          const bolt = bolts[i];
+          bolt.mesh.position.z += 26 * dt;
+          let spent = bolt.mesh.position.z > FIELD_D / 2;
+          // Destroy the first brick the bolt touches (1 HP damage).
+          for (let j = bricks.length - 1; j >= 0; j--) {
+            const br = bricks[j];
+            if (
+              bolt.mesh.position.x > br.minX &&
+              bolt.mesh.position.x < br.maxX &&
+              bolt.mesh.position.z > br.minZ &&
+              bolt.mesh.position.z < br.maxZ
+            ) {
+              damageBrick(j, now);
+              spent = true;
+              break;
+            }
+          }
+          if (spent) {
+            scene.remove(bolt.mesh);
+            bolts.splice(i, 1);
+          }
+        }
+
         // Level clear.
         if (bricks.length === 0 && status === 'playing') {
           level += 1;
           if (level > 6) {
             status = 'won';
+            gameAudio.victory();
             bestScore = Math.max(bestScore, score);
             try {
               localStorage.setItem('arcadery:brick-smash:hs', String(bestScore));
             } catch {}
           } else {
             // Rebuild brick layer + reset ball to paddle.
+            gameAudio.levelup();
             buildLevel(level);
             for (const m of ballMeshes) scene.remove(m);
             ballMeshes.length = 0;
             balls.length = 0;
+            for (const bolt of bolts) scene.remove(bolt.mesh);
+            bolts.length = 0;
             spawnBall(true);
           }
         }
@@ -681,6 +862,11 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
           level,
           bricksLeft: bricks.length,
           highScore: Math.max(bestScore, score),
+          bricksDestroyed,
+          wideS: wideTimer,
+          slowS: slowTimer,
+          laserS: laserTimer,
+          stickyN: stickyCatches,
         });
       }
     };
@@ -696,6 +882,8 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
       renderer.domElement.removeEventListener('mousemove', onMouseMove);
       renderer.domElement.removeEventListener('mousedown', onMouseDown);
       renderer.dispose();
+      boltGeo.dispose();
+      boltMat.dispose();
       scene.traverse((obj) => {
         const mesh = obj as THREE.Mesh;
         if (mesh.geometry) mesh.geometry.dispose();
@@ -719,9 +907,21 @@ export function BrickSmash({ gameContext, onExit }: BrickSmashProps) {
           setRunId((n) => n + 1);
         }}
         onOpenLeaderboard={() => setShowLeaderboard(true)}
+        onPause={() => setPausedBoth(true)}
         onExit={onExit}
       />
       <MobileControls inputRef={inputRef} status={ui.status} />
+      <PauseOverlay
+        open={paused && ui.status === 'playing'}
+        onResume={() => setPausedBoth(false)}
+        onRestart={() => {
+          setUi(INITIAL_UI);
+          setRunId((n) => n + 1);
+        }}
+        onExit={onExit}
+        accentClass="bg-cyan-600 hover:bg-cyan-500"
+        hint="Mouse or A · D · Space launches"
+      />
       <LeaderboardModal
         open={showLeaderboard}
         onClose={() => setShowLeaderboard(false)}
@@ -768,13 +968,17 @@ function Hud({
   ui,
   onRestart,
   onOpenLeaderboard,
+  onPause,
   onExit,
 }: {
   ui: GameUi;
   onRestart: () => void;
   onOpenLeaderboard: () => void;
+  onPause: () => void;
   onExit?: () => void;
 }) {
+  const chipClass =
+    'pointer-events-auto inline-flex items-center justify-center rounded-md border border-cyan-300/30 bg-cyan-400/10 p-1.5 text-cyan-200 hover:bg-cyan-400/20';
   return (
     <>
       <div className="pointer-events-none absolute top-3 right-3 z-20 flex items-center gap-2 font-mono">
@@ -785,6 +989,8 @@ function Hud({
         >
           <Trophy className="h-3.5 w-3.5" /> Leaderboard
         </button>
+        <MuteButton className={chipClass} />
+        {ui.status === 'playing' && <PauseButton onClick={onPause} className={chipClass} />}
         {onExit && (
           <button
             type="button"
@@ -814,6 +1020,14 @@ function Hud({
             {ui.highScore.toLocaleString()}
           </div>
         </div>
+        {(ui.wideS > 0 || ui.slowS > 0 || ui.laserS > 0 || ui.stickyN > 0) && (
+          <div className="rounded-lg bg-black/55 backdrop-blur px-3 py-2 flex flex-col gap-0.5 text-[11px] font-semibold tabular-nums">
+            {ui.wideS > 0 && <span className="text-sky-300">WIDE {Math.ceil(ui.wideS)}s</span>}
+            {ui.slowS > 0 && <span className="text-emerald-300">SLOW {Math.ceil(ui.slowS)}s</span>}
+            {ui.laserS > 0 && <span className="text-red-400">LASER {Math.ceil(ui.laserS)}s</span>}
+            {ui.stickyN > 0 && <span className="text-lime-300">STICKY ×{ui.stickyN}</span>}
+          </div>
+        )}
       </div>
       <div className="pointer-events-none absolute top-16 right-4 z-10 flex flex-col items-end gap-2 font-mono text-white">
         <div className="rounded-lg bg-black/55 backdrop-blur px-3 py-2 text-right">
@@ -880,6 +1094,7 @@ function MobileControls({
 }) {
   if (status !== 'playing') return null;
   const hold = (key: 'paddleX', v: number) => {
+    if (v !== 0) gameAudio.unlock();
     if (inputRef.current) inputRef.current[key] = v;
   };
   return (
@@ -909,6 +1124,7 @@ function MobileControls({
           type="button"
           onTouchStart={(e) => {
             e.preventDefault();
+            gameAudio.unlock();
             if (inputRef.current) inputRef.current.launch = 1;
           }}
           className="pointer-events-auto select-none rounded-full bg-amber-500/30 backdrop-blur active:bg-amber-400/50 border border-amber-300/40 flex items-center justify-center font-bold text-amber-100 touch-none w-24 h-16 text-sm"

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Trophy, X } from 'lucide-react';
 import {
@@ -8,6 +8,13 @@ import {
   type LeaderboardConfig,
 } from '@/components/games/_shared/leaderboard-modal';
 import type { GameContext } from '@/components/games/_shared/entry-gate';
+import { gameAudio } from '@/components/games/_shared/audio';
+import {
+  MuteButton,
+  PauseButton,
+  PauseOverlay,
+  usePauseKey,
+} from '@/components/games/_shared/game-chrome';
 
 // Sky Glider — Tron-style wingsuit through a procedural neon canyon.
 //
@@ -90,8 +97,25 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
   const [runId, setRunId] = useState(0);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const statusRef = useRef<RunUi['status']>('playing');
+  statusRef.current = ui.status;
   const gameStartRef = useRef<number>(performance.now());
   const inputRef = useRef({ left: 0, right: 0, up: 0, down: 0, boost: 0 });
+
+  const setPausedBoth = useCallback((next: boolean) => {
+    pausedRef.current = next;
+    setPaused(next);
+  }, []);
+
+  usePauseKey(
+    useCallback(() => {
+      if (statusRef.current !== 'playing') return;
+      gameAudio.click();
+      setPausedBoth(!pausedRef.current);
+    }, [setPausedBoth]),
+  );
 
   useEffect(() => {
     if (ui.status !== 'lost' || submitted) return;
@@ -113,6 +137,8 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
   useEffect(() => {
     gameStartRef.current = performance.now();
     setSubmitted(false);
+    pausedRef.current = false;
+    setPaused(false);
   }, [runId]);
 
   useEffect(() => {
@@ -439,6 +465,8 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
     let status: 'playing' | 'lost' = 'playing';
     let shake = 0;
     let worldWraps = 0;
+    let wasBoosting = false;
+    let lastMilestone = 0;
 
     spawnAhead(player.z + 220);
 
@@ -450,6 +478,7 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
       ) {
         e.preventDefault();
       }
+      gameAudio.unlock();
       keys.add(e.key.toLowerCase());
     };
     const onKeyUp = (e: KeyboardEvent) => keys.delete(e.key.toLowerCase());
@@ -478,6 +507,13 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
 
+      // Paused: keep rendering the frozen scene, skip all simulation. `last`
+      // keeps advancing so resume doesn't get a giant dt.
+      if (pausedRef.current) {
+        renderer.render(scene, camera);
+        return;
+      }
+
       const input = inputRef.current;
       const left = (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + input.left;
       const right = (keys.has('d') || keys.has('arrowright') ? 1 : 0) + input.right;
@@ -499,6 +535,8 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
 
         // ── Boost ──────────────────────────────────────────────────────
         const wantBoost = boostBtn > 0.1 && boost > 0.05;
+        if (wantBoost && !wasBoosting) gameAudio.boost();
+        wasBoosting = wantBoost;
         if (wantBoost) {
           boost = Math.max(0, boost - BOOST_DRAIN * dt);
           speed = THREE.MathUtils.damp(speed, MAX_SPEED, 4.5, dt);
@@ -513,6 +551,12 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
         player.y += player.vy * dt;
         player.z += player.vz * dt;
         distance += player.vz * dt;
+
+        // Celebrate every 500m flown.
+        if (Math.floor(distance / 500) > Math.floor(lastMilestone / 500)) {
+          gameAudio.levelup();
+        }
+        lastMilestone = distance;
 
         // Soft canyon containment — push the glider back if it wanders too
         // far from the centerline. Past CRASH_RADIUS we count it as a wall.
@@ -535,7 +579,14 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
             player.vx += -Math.sign(dx) * 30;
             if (player.y > 9) player.vy -= 25;
             if (player.y < -7) player.vy += 25;
-            if (health <= 0) status = 'lost';
+            if (health <= 0) {
+              status = 'lost';
+              gameAudio.explosionBig();
+              gameAudio.gameover();
+            } else {
+              gameAudio.hit();
+              if (health === 1) gameAudio.alarm();
+            }
           }
         }
 
@@ -575,6 +626,7 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
                 comboDecay = 4;
                 shake = Math.min(8, shake + 3);
                 boost = Math.min(1, boost + 0.12);
+                gameAudio.combo(combo);
                 // Score burst — render a quick expanding hoop.
                 spawnRingPulse(ringPos.x, ringPos.y, ringPos.z);
               } else if (r < RING_RADIUS + 0.8) {
@@ -597,7 +649,14 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
                 shake = 28;
                 combo = 0;
                 spawnDebris(sp.x, sp.y, sp.z);
-                if (health <= 0) status = 'lost';
+                if (health <= 0) {
+                  status = 'lost';
+                  gameAudio.explosionBig();
+                  gameAudio.gameover();
+                } else {
+                  gameAudio.hit();
+                  if (health === 1) gameAudio.alarm();
+                }
               }
             } else if (p.kind === 'current') {
               const sp = p.mesh.position as THREE.Vector3;
@@ -735,6 +794,7 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
     // wasteful; instead piggyback on rAF via a second hook.
     const pulseRaf = () => {
       requestAnimationFrame(pulseRaf);
+      if (pausedRef.current) return; // pulses freeze with the rest of the scene
       for (let i = pulses.length - 1; i >= 0; i--) {
         const p = pulses[i];
         p.ttl -= 1 / 60;
@@ -779,9 +839,21 @@ export function SkyGlider({ gameContext, onExit }: SkyGliderProps) {
           setRunId((n) => n + 1);
         }}
         onOpenLeaderboard={() => setShowLeaderboard(true)}
+        onPause={() => setPausedBoth(true)}
         onExit={onExit}
       />
       <MobileControls inputRef={inputRef} status={ui.status} />
+      <PauseOverlay
+        open={paused && ui.status === 'playing'}
+        onResume={() => setPausedBoth(false)}
+        onRestart={() => {
+          setUi(INITIAL_UI);
+          setRunId((n) => n + 1);
+        }}
+        onExit={onExit}
+        accentClass="bg-cyan-500/80 hover:bg-cyan-400"
+        hint="WASD steer · Space boost · Ring = combo"
+      />
       <LeaderboardModal
         open={showLeaderboard}
         onClose={() => setShowLeaderboard(false)}
@@ -798,13 +870,17 @@ function Hud({
   ui,
   onRestart,
   onOpenLeaderboard,
+  onPause,
   onExit,
 }: {
   ui: RunUi;
   onRestart: () => void;
   onOpenLeaderboard: () => void;
+  onPause: () => void;
   onExit?: () => void;
 }) {
+  const chipClass =
+    'pointer-events-auto inline-flex items-center justify-center rounded-md border border-cyan-300/30 bg-cyan-400/10 p-1.5 text-cyan-200 hover:bg-cyan-400/20';
   return (
     <>
       <div className="pointer-events-none absolute top-3 right-3 z-20 flex items-center gap-2 font-mono">
@@ -815,6 +891,8 @@ function Hud({
         >
           <Trophy className="h-3.5 w-3.5" /> Leaderboard
         </button>
+        <MuteButton className={chipClass} />
+        {ui.status === 'playing' && <PauseButton onClick={onPause} className={chipClass} />}
         {onExit && (
           <button
             type="button"
@@ -972,6 +1050,7 @@ function MobileControls({
 }) {
   if (status !== 'playing') return null;
   const press = (k: 'left' | 'right' | 'up' | 'down' | 'boost', v: number) => {
+    if (v > 0) gameAudio.unlock();
     if (inputRef.current) inputRef.current[k] = v;
   };
   const Btn = ({

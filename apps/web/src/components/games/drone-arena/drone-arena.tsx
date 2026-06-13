@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Trophy, X } from 'lucide-react';
 import {
@@ -8,6 +8,13 @@ import {
   type LeaderboardConfig,
 } from '@/components/games/_shared/leaderboard-modal';
 import type { GameContext } from '@/components/games/_shared/entry-gate';
+import { gameAudio } from '@/components/games/_shared/audio';
+import {
+  MuteButton,
+  PauseButton,
+  PauseOverlay,
+  usePauseKey,
+} from '@/components/games/_shared/game-chrome';
 
 // Drone Arena — third-person mech wave combat in a holographic colosseum.
 //
@@ -117,6 +124,10 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
   const [runId, setRunId] = useState(0);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const statusRef = useRef<RunUi['status']>('playing');
+  statusRef.current = ui.status;
   const gameStartRef = useRef<number>(performance.now());
   const inputRef = useRef({
     left: 0,
@@ -127,6 +138,19 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
     dash: 0,
     missile: 0,
   });
+
+  const setPausedBoth = useCallback((next: boolean) => {
+    pausedRef.current = next;
+    setPaused(next);
+  }, []);
+
+  usePauseKey(
+    useCallback(() => {
+      if (statusRef.current !== 'playing') return;
+      gameAudio.click();
+      setPausedBoth(!pausedRef.current);
+    }, [setPausedBoth]),
+  );
 
   useEffect(() => {
     if (ui.status !== 'lost' || submitted) return;
@@ -148,6 +172,8 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
   useEffect(() => {
     gameStartRef.current = performance.now();
     setSubmitted(false);
+    pausedRef.current = false;
+    setPaused(false);
   }, [runId]);
 
   useEffect(() => {
@@ -453,6 +479,7 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
       ) {
         e.preventDefault();
       }
+      gameAudio.unlock();
       keys.add(e.key.toLowerCase());
     };
     const onKeyUp = (e: KeyboardEvent) => keys.delete(e.key.toLowerCase());
@@ -530,6 +557,8 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
         enemy: false,
         damage: 1,
       });
+      // BLAST_CD (0.18s) already caps this at ~5.5 sfx/sec.
+      gameAudio.shoot();
     };
 
     const fireMissile = () => {
@@ -549,6 +578,17 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
         target,
         ttl: 3.5,
       });
+      gameAudio.laser();
+    };
+
+    // Player damage helper: hit sting, low-hull alarm, death sting.
+    const playerHurt = () => {
+      gameAudio.hit();
+      if (player.hp === 1) gameAudio.alarm();
+      if (player.hp <= 0) {
+        status = 'lost';
+        gameAudio.gameover();
+      }
     };
 
     // ─── Loop ────────────────────────────────────────────────────────
@@ -560,6 +600,14 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
       raf = requestAnimationFrame(tick);
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
+
+      // Paused: keep rendering the frozen scene, skip all simulation. `last`
+      // keeps advancing so resume doesn't get a giant dt; every cooldown and
+      // wave timer is a dt-decremented countdown, so nothing elapses here.
+      if (pausedRef.current) {
+        renderer.render(scene, camera);
+        return;
+      }
 
       const input = inputRef.current;
       const left = (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + input.left;
@@ -606,6 +654,7 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
           player.dashTimer = DASH_DUR;
           player.invuln = DASH_DUR;
           player.vel.copy(moveDir).multiplyScalar(DASH_VEL);
+          gameAudio.boost();
         } else if (player.dashTimer > 0) {
           player.dashTimer -= dt;
         } else {
@@ -683,7 +732,7 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
             player.invuln = 1;
             shake = 22;
             spawnPulse(player.pos.x, player.pos.y, player.pos.z, 0xf43f5e, 2.5);
-            if (player.hp <= 0) status = 'lost';
+            playerHurt();
           }
         }
 
@@ -708,6 +757,8 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
                   score += e.reward;
                   shake = Math.min(20, shake + 4);
                   spawnPulse(e.pos.x, e.pos.y, e.pos.z, 0xff8a00, 3);
+                  if (e.kind === 'tank') gameAudio.explosionBig();
+                  else gameAudio.explosionSmall();
                   scene.remove(e.mesh);
                   enemies.splice(j, 1);
                 }
@@ -724,7 +775,7 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
               shake = Math.max(shake, 18);
               spawnPulse(player.pos.x, player.pos.y, player.pos.z, 0xf43f5e, 2);
               consumed = true;
-              if (player.hp <= 0) status = 'lost';
+              playerHurt();
             }
           }
           if (consumed || b.ttl <= 0) {
@@ -762,8 +813,12 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
               if (e.hp <= 0) {
                 score += e.reward + 50;
                 spawnPulse(e.pos.x, e.pos.y, e.pos.z, 0xff8a00, 4.5);
+                if (e.kind === 'tank') gameAudio.explosionBig();
+                else gameAudio.explosionSmall();
                 scene.remove(e.mesh);
                 enemies.splice(j, 1);
+              } else {
+                gameAudio.explosionSmall();
               }
               consumed = true;
               break;
@@ -785,6 +840,7 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
           waveCooldown -= dt;
           if (waveCooldown <= 0) {
             wave += 1;
+            gameAudio.levelup();
             startWave(wave);
           }
         }
@@ -807,7 +863,10 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
       // First-wave kick-off (only once).
       if (wave === 1 && enemies.length === 0 && !waveActive && waveCooldown > 0) {
         waveCooldown -= dt;
-        if (waveCooldown <= 0) startWave(1);
+        if (waveCooldown <= 0) {
+          gameAudio.levelup();
+          startWave(1);
+        }
       }
 
       // ── Player + camera transforms ────────────────────────────────
@@ -892,9 +951,21 @@ export function DroneArena({ gameContext, onExit }: DroneArenaProps) {
           setRunId((n) => n + 1);
         }}
         onOpenLeaderboard={() => setShowLeaderboard(true)}
+        onPause={() => setPausedBoth(true)}
         onExit={onExit}
       />
       <MobileControls inputRef={inputRef} status={ui.status} />
+      <PauseOverlay
+        open={paused && ui.status === 'playing'}
+        onResume={() => setPausedBoth(false)}
+        onRestart={() => {
+          setUi(INITIAL_UI);
+          setRunId((n) => n + 1);
+        }}
+        onExit={onExit}
+        accentClass="bg-cyan-500 hover:bg-cyan-400"
+        hint="WASD move · Space blaster · F missile · Shift dash"
+      />
       <LeaderboardModal
         open={showLeaderboard}
         onClose={() => setShowLeaderboard(false)}
@@ -911,13 +982,17 @@ function Hud({
   ui,
   onRestart,
   onOpenLeaderboard,
+  onPause,
   onExit,
 }: {
   ui: RunUi;
   onRestart: () => void;
   onOpenLeaderboard: () => void;
+  onPause: () => void;
   onExit?: () => void;
 }) {
+  const chipClass =
+    'pointer-events-auto inline-flex items-center justify-center rounded-md border border-cyan-300/30 bg-cyan-400/10 p-1.5 text-cyan-200 hover:bg-cyan-400/20';
   return (
     <>
       <div className="pointer-events-none absolute top-3 right-3 z-20 flex items-center gap-2 font-mono">
@@ -928,6 +1003,8 @@ function Hud({
         >
           <Trophy className="h-3.5 w-3.5" /> Leaderboard
         </button>
+        <MuteButton className={chipClass} />
+        {ui.status === 'playing' && <PauseButton onClick={onPause} className={chipClass} />}
         {onExit && (
           <button
             type="button"
@@ -1088,6 +1165,7 @@ function MobileControls({
     k: 'left' | 'right' | 'fwd' | 'back' | 'fire' | 'dash' | 'missile',
     v: number,
   ) => {
+    if (v > 0) gameAudio.unlock();
     if (inputRef.current) inputRef.current[k] = v;
   };
   const Btn = ({

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Trophy, X } from 'lucide-react';
 import {
@@ -8,6 +8,13 @@ import {
   type LeaderboardConfig,
 } from '@/components/games/_shared/leaderboard-modal';
 import type { GameContext } from '@/components/games/_shared/entry-gate';
+import { gameAudio } from '@/components/games/_shared/audio';
+import {
+  MuteButton,
+  PauseButton,
+  PauseOverlay,
+  usePauseKey,
+} from '@/components/games/_shared/game-chrome';
 
 // Endless 3D runner. Player auto-runs forward down a 3-lane road; left/right
 // snaps between lanes, space hops. Obstacles, coin pickups, and gates spawn
@@ -29,6 +36,8 @@ interface RunUi {
   coins: number;
   multiplier: number;
   bestM: number;
+  magnetSec: number;
+  shieldOn: boolean;
 }
 
 const INITIAL_UI: RunUi = {
@@ -37,14 +46,18 @@ const INITIAL_UI: RunUi = {
   coins: 0,
   multiplier: 1,
   bestM: 0,
+  magnetSec: 0,
+  shieldOn: false,
 };
 
 interface Obstacle {
   mesh: THREE.Object3D;
   z: number;
   lane: number;
-  kind: 'block' | 'gate' | 'coin';
+  kind: 'block' | 'gate' | 'coin' | 'slider' | 'magnet' | 'shield';
   collected: boolean;
+  dir?: number; // slider sweep direction (+1 / -1)
+  passed?: boolean; // near-miss bookkeeping — set once the obstacle is behind us
 }
 
 interface CubeRunnerProps {
@@ -68,8 +81,25 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
   const [runId, setRunId] = useState(0);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const statusRef = useRef<RunUi['status']>('playing');
+  statusRef.current = ui.status;
   const gameStartRef = useRef<number>(performance.now());
   const inputRef = useRef({ left: 0, right: 0, jump: 0, slide: 0 });
+
+  const setPausedBoth = useCallback((next: boolean) => {
+    pausedRef.current = next;
+    setPaused(next);
+  }, []);
+
+  usePauseKey(
+    useCallback(() => {
+      if (statusRef.current !== 'playing') return;
+      gameAudio.click();
+      setPausedBoth(!pausedRef.current);
+    }, [setPausedBoth]),
+  );
 
   useEffect(() => {
     if (ui.status !== 'lost' || submitted) return;
@@ -91,6 +121,8 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
   useEffect(() => {
     gameStartRef.current = performance.now();
     setSubmitted(false);
+    pausedRef.current = false;
+    setPaused(false);
   }, [runId]);
 
   useEffect(() => {
@@ -226,6 +258,21 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
     );
     visor.position.set(0, 1.35, 0);
     playerGroup.add(visor);
+    // Shield aura — translucent cyan bubble shown while a shield is held.
+    const shieldAura = new THREE.Mesh(
+      new THREE.SphereGeometry(0.95, 18, 14),
+      new THREE.MeshStandardMaterial({
+        color: 0x67e8f9,
+        emissive: 0x06b6d4,
+        emissiveIntensity: 0.9,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false,
+      }),
+    );
+    shieldAura.position.y = 0.85;
+    shieldAura.visible = false;
+    playerGroup.add(shieldAura);
     scene.add(playerGroup);
 
     // ─── Obstacle pool ─────────────────────────────────────────────────
@@ -248,6 +295,29 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
       emissiveIntensity: 1.3,
       metalness: 0.7,
       roughness: 0.2,
+    });
+    // Slider obstacles are bright orange so the sideways sweep reads instantly
+    // against the magenta blocks and amber gates.
+    const sliderMat = new THREE.MeshStandardMaterial({
+      color: 0xff7b1a,
+      emissive: 0xc2410c,
+      emissiveIntensity: 0.9,
+      metalness: 0.3,
+      roughness: 0.4,
+    });
+    const magnetMat = new THREE.MeshStandardMaterial({
+      color: 0xfbbf24,
+      emissive: 0xf59e0b,
+      emissiveIntensity: 1.5,
+      metalness: 0.6,
+      roughness: 0.25,
+    });
+    const shieldPickupMat = new THREE.MeshStandardMaterial({
+      color: 0x67e8f9,
+      emissive: 0x06b6d4,
+      emissiveIntensity: 1.5,
+      metalness: 0.4,
+      roughness: 0.25,
     });
 
     const makeBlock = (lane: number, z: number): Obstacle => {
@@ -287,13 +357,44 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
       scene.add(mesh);
       return { mesh, z, lane, kind: 'coin', collected: false };
     };
+    const makePowerup = (
+      lane: number,
+      z: number,
+      kind: 'magnet' | 'shield',
+    ): Obstacle => {
+      const mesh = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.45),
+        kind === 'magnet' ? magnetMat : shieldPickupMat,
+      );
+      mesh.position.set(LANE_X[lane], 1.1, z);
+      mesh.castShadow = true;
+      scene.add(mesh);
+      return { mesh, z, lane, kind, collected: false };
+    };
+    const makeSlider = (z: number): Obstacle => {
+      // Sweeps sideways across all three lanes — the player times the lane
+      // change (or jumps) instead of just dodging a static block.
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.1, 1.2), sliderMat);
+      const dir = Math.random() < 0.5 ? -1 : 1;
+      mesh.position.set(-dir * LANE_X[2], 0.55, z);
+      mesh.castShadow = true;
+      scene.add(mesh);
+      return { mesh, z, lane: 1, kind: 'slider', collected: false, dir };
+    };
 
     // Procedural spawner — places a row of items every few meters ahead of
     // the player, leaving at least one safe lane open.
     let nextSpawnZ = 20;
     const spawnPattern = (z: number) => {
       const r = Math.random();
-      if (r < 0.55) {
+      if (distance > 300 && r < 0.13) {
+        // Slider row — only after the player has warmed up. A coin sits in a
+        // random lane behind it as bait for a tight follow-up move.
+        obstacles.push(makeSlider(z));
+        if (Math.random() < 0.6) {
+          obstacles.push(makeCoin(Math.floor(Math.random() * 3), z + 4));
+        }
+      } else if (r < 0.55) {
         // Block row: pick 1-2 lanes to block.
         const blocked = pickLanes(Math.random() < 0.45 ? 2 : 1);
         for (const lane of blocked) obstacles.push(makeBlock(lane, z));
@@ -311,9 +412,17 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
           if (Math.random() < 0.6) obstacles.push(makeCoin(lane, z - i * 2.5));
         }
       } else {
-        // Coin arch — three coins across all lanes.
+        // Coin arch — three coins across all lanes. Rarely one coin is swapped
+        // for a power-up pickup (magnet or shield).
+        const powerLane = Math.random() < 0.22 ? Math.floor(Math.random() * 3) : -1;
         for (let lane = 0; lane < 3; lane++) {
-          obstacles.push(makeCoin(lane, z));
+          if (lane === powerLane) {
+            obstacles.push(
+              makePowerup(lane, z, Math.random() < 0.5 ? 'magnet' : 'shield'),
+            );
+          } else {
+            obstacles.push(makeCoin(lane, z));
+          }
         }
       }
     };
@@ -337,6 +446,79 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
     try {
       bestM = Number(localStorage.getItem('arcadery:cube-runner:best') ?? 0);
     } catch {}
+    // Power-up + juice state.
+    let magnetTimer = 0; // seconds of magnet remaining
+    let shieldActive = false; // one free crash while true
+    let invulnTimer = 0; // brief grace after a shielded crash
+    let shake = 0; // camera shake intensity, decays per frame
+    let speedTier = 0; // levelup() fires when the speed ramp crosses a tier
+    let airborne = false; // for land() on touchdown
+    let lastCoinSfx = 0; // throttle coin() during magnet bursts
+    let lastNearMiss = 0; // throttle tick() near-miss blips
+
+    // ─── Debris particles (shield shatter, magnet sparkles) ─────────────
+    interface Debris {
+      mesh: THREE.Mesh;
+      vel: THREE.Vector3;
+      ttl: number;
+    }
+    const debris: Debris[] = [];
+    const spawnBurst = (
+      pos: THREE.Vector3,
+      mat: THREE.MeshStandardMaterial,
+      count: number,
+      spread: number,
+    ) => {
+      for (let i = 0; i < count; i++) {
+        const m = new THREE.Mesh(
+          new THREE.TetrahedronGeometry(0.12 + Math.random() * 0.12),
+          mat,
+        );
+        m.position.copy(pos);
+        m.castShadow = false;
+        scene.add(m);
+        debris.push({
+          mesh: m,
+          vel: new THREE.Vector3(
+            (Math.random() - 0.5) * spread * 2,
+            1.5 + Math.random() * spread,
+            (Math.random() - 0.5) * spread * 2,
+          ),
+          ttl: 0.6 + Math.random() * 0.5,
+        });
+      }
+    };
+
+    const recordBest = () => {
+      bestM = Math.max(bestM, Math.floor(distance));
+      try {
+        localStorage.setItem('arcadery:cube-runner:best', String(bestM));
+      } catch {}
+    };
+
+    // Solid obstacle hit: a held shield shatters the obstacle instead of
+    // ending the run; otherwise it's a wipeout.
+    const handleCrash = (o: Obstacle) => {
+      if (invulnTimer > 0) return;
+      if (shieldActive) {
+        shieldActive = false;
+        invulnTimer = 1.0;
+        o.collected = true;
+        scene.remove(o.mesh);
+        spawnBurst(o.mesh.position.clone(), shieldPickupMat, 10, 4);
+        spawnBurst(o.mesh.position.clone(), blockMat, 6, 3);
+        gameAudio.explosionSmall();
+        shake = Math.max(shake, 8);
+        return;
+      }
+      status = 'lost';
+      recordBest();
+      spawnBurst(playerGroup.position.clone(), blockMat, 12, 4);
+      shake = Math.max(shake, 9);
+      gameAudio.hit();
+      gameAudio.explosionSmall();
+      gameAudio.gameover();
+    };
 
     // ─── Input handling ─────────────────────────────────────────────────
     let leftPressedLast = false;
@@ -348,6 +530,7 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
         e.preventDefault();
       }
+      gameAudio.unlock();
       keys.add(e.key.toLowerCase());
     };
     const onKeyUp = (e: KeyboardEvent) => keys.delete(e.key.toLowerCase());
@@ -373,6 +556,14 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
       const dt = Math.min(0.05, (now - lastTime) / 1000);
       lastTime = now;
 
+      // Paused: keep rendering the frozen scene, skip all simulation.
+      // Distance/speed integrate per-frame dt, and `lastTime` keeps advancing
+      // above, so resume never sees a giant dt.
+      if (pausedRef.current) {
+        renderer.render(scene, camera);
+        return;
+      }
+
       // ─── Read inputs (edge-trigger for lane / jump / slide). ────────
       const input = inputRef.current;
       const leftPressed = keys.has('a') || keys.has('arrowleft') || input.left > 0;
@@ -385,6 +576,8 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
         if (rightPressed && !rightPressedLast) targetLane = Math.min(2, targetLane + 1);
         if (jumpPressed && !jumpPressedLast && playerY <= 0.01 && !isSliding) {
           playerVy = JUMP_SPEED;
+          airborne = true;
+          gameAudio.jump();
         }
         if (slidePressed && !slidePressedLast && playerY <= 0.01 && !isSliding) {
           isSliding = true;
@@ -399,6 +592,17 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
       if (status === 'playing') {
         // Speed ramps up over time, capped.
         baseSpeed = Math.min(28, 14 + distance * 0.012);
+        // Celebrate each speed tier on the ramp (every +3.5 m/s until cap).
+        const tier = Math.floor((baseSpeed - 14) / 3.5);
+        if (tier > speedTier) {
+          speedTier = tier;
+          gameAudio.levelup();
+          shake = Math.max(shake, 4);
+        }
+
+        // Power-up timers.
+        if (magnetTimer > 0) magnetTimer = Math.max(0, magnetTimer - dt);
+        if (invulnTimer > 0) invulnTimer = Math.max(0, invulnTimer - dt);
 
         // Slide timer.
         if (isSliding) {
@@ -410,6 +614,10 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
         playerVy -= GRAVITY * dt;
         playerY = Math.max(0, playerY + playerVy * dt);
         if (playerY <= 0 && playerVy < 0) playerVy = 0;
+        if (airborne && playerY <= 0) {
+          airborne = false;
+          gameAudio.land();
+        }
 
         // Lane lerp.
         playerLaneX += (LANE_X[targetLane] - playerLaneX) * Math.min(1, 12 * dt);
@@ -442,10 +650,36 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
         for (let i = obstacles.length - 1; i >= 0; i--) {
           const o = obstacles[i];
           o.z -= dz;
+          // Magnet: curve nearby coins toward the player before placing them.
+          if (o.kind === 'coin' && !o.collected && magnetTimer > 0) {
+            const dx = o.mesh.position.x - playerLaneX;
+            if (Math.hypot(dx, o.z) < 9.6) {
+              o.mesh.position.x += (playerLaneX - o.mesh.position.x) * Math.min(1, 10 * dt);
+              o.z += (0 - o.z) * Math.min(1, 6 * dt);
+              // Cheap sparkle trail on the pull.
+              if (Math.random() < 0.12) {
+                spawnBurst(o.mesh.position.clone(), coinMat, 1, 1.2);
+              }
+            }
+          }
           o.mesh.position.z = o.z;
           if (o.kind === 'coin') {
             // Spin coins.
             o.mesh.rotation.z += dt * 4;
+          } else if (o.kind === 'magnet' || o.kind === 'shield') {
+            // Spin + bob power-ups so they read as pickups.
+            o.mesh.rotation.y += dt * 3;
+            o.mesh.position.y = 1.1 + Math.sin(now / 1000 * 4 + o.z) * 0.15;
+          } else if (o.kind === 'slider' && o.dir !== undefined) {
+            // Sweep sideways and bounce off the outer lanes.
+            o.mesh.position.x += o.dir * 3.4 * dt;
+            if (o.mesh.position.x > LANE_X[2]) {
+              o.mesh.position.x = LANE_X[2];
+              o.dir = -1;
+            } else if (o.mesh.position.x < LANE_X[0]) {
+              o.mesh.position.x = LANE_X[0];
+              o.dir = 1;
+            }
           }
           // Collision with player. Player occupies lane targetLane (snapped X).
           if (
@@ -459,24 +693,44 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
               coinCount += 1 * multiplier;
               multiplier = Math.min(5, multiplier + 1);
               multiplierTimer = 2.4;
-            } else if (o.kind === 'block') {
-              // Blocks: hit if not jumping over them.
-              if (playerY < 0.9) {
-                status = 'lost';
-                bestM = Math.max(bestM, Math.floor(distance));
-                try {
-                  localStorage.setItem('arcadery:cube-runner:best', String(bestM));
-                } catch {}
+              // Magnet can vacuum bursts of coins — cap the sfx rate.
+              if (now - lastCoinSfx > 100) {
+                lastCoinSfx = now;
+                gameAudio.coin();
               }
+            } else if (o.kind === 'magnet') {
+              o.collected = true;
+              scene.remove(o.mesh);
+              magnetTimer = 10;
+              gameAudio.powerup();
+              spawnBurst(playerGroup.position.clone(), magnetMat, 6, 2.5);
+            } else if (o.kind === 'shield') {
+              o.collected = true;
+              scene.remove(o.mesh);
+              shieldActive = true;
+              gameAudio.pickup();
+              spawnBurst(playerGroup.position.clone(), shieldPickupMat, 6, 2.5);
+            } else if (o.kind === 'block' || o.kind === 'slider') {
+              // Blocks + sliders: hit if not jumping over them.
+              if (playerY < 0.9) handleCrash(o);
             } else if (o.kind === 'gate') {
               // Gates: only safe if sliding.
-              if (!isSliding) {
-                status = 'lost';
-                bestM = Math.max(bestM, Math.floor(distance));
-                try {
-                  localStorage.setItem('arcadery:cube-runner:best', String(bestM));
-                } catch {}
-              }
+              if (!isSliding) handleCrash(o);
+            }
+          }
+          // Near-miss blip: a solid obstacle just slipped behind us in our
+          // lane (jumped block/slider or slid gate) — reward the close call.
+          if (
+            !o.collected &&
+            !o.passed &&
+            o.z < -0.9 &&
+            (o.kind === 'block' || o.kind === 'slider' || o.kind === 'gate') &&
+            Math.abs(o.mesh.position.x - playerLaneX) < 1.0
+          ) {
+            o.passed = true;
+            if (now - lastNearMiss > 350) {
+              lastNearMiss = now;
+              gameAudio.tick();
             }
           }
           if (o.z < -DESPAWN_BEHIND) {
@@ -501,10 +755,38 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
       const tilt = (LANE_X[targetLane] - playerLaneX) * 0.15;
       playerGroup.rotation.z = -tilt;
       playerGroup.rotation.y = tilt * 0.5;
+      // Shield aura + post-shield invulnerability flicker.
+      shieldAura.visible = shieldActive;
+      shieldAura.rotation.y += dt * 1.5;
+      const flicker = invulnTimer > 0 && Math.floor(now / 80) % 2 === 0;
+      body.visible = !flicker;
+      visor.visible = !flicker;
 
-      // Camera — fixed chase relative to player.
+      // Camera — fixed chase relative to player, plus impact shake.
       camera.position.set(playerLaneX * 0.4, 3.6, playerGroup.position.z - 6.5);
       camera.lookAt(playerLaneX * 0.1, 1.0, playerGroup.position.z + 8);
+      if (shake > 0.05) {
+        camera.position.x += (Math.random() - 0.5) * shake * 0.05;
+        camera.position.y += (Math.random() - 0.5) * shake * 0.05;
+      }
+      shake *= 0.86;
+
+      // Debris physics — runs even after a wipeout so the burst finishes.
+      for (let i = debris.length - 1; i >= 0; i--) {
+        const d = debris[i];
+        d.vel.y -= GRAVITY * dt;
+        d.mesh.position.x += d.vel.x * dt;
+        d.mesh.position.y += d.vel.y * dt;
+        d.mesh.position.z += d.vel.z * dt;
+        d.mesh.rotation.x += dt * 4;
+        d.mesh.rotation.z += dt * 5;
+        d.ttl -= dt;
+        if (d.ttl <= 0) {
+          scene.remove(d.mesh);
+          d.mesh.geometry.dispose();
+          debris.splice(i, 1);
+        }
+      }
 
       renderer.render(scene, camera);
 
@@ -516,6 +798,8 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
           coins: coinCount,
           multiplier,
           bestM,
+          magnetSec: Math.ceil(magnetTimer),
+          shieldOn: shieldActive,
         });
       }
     };
@@ -550,9 +834,21 @@ export function CubeRunner({ gameContext, onExit }: CubeRunnerProps) {
           setRunId((n) => n + 1);
         }}
         onOpenLeaderboard={() => setShowLeaderboard(true)}
+        onPause={() => setPausedBoth(true)}
         onExit={onExit}
       />
       <MobileControls inputRef={inputRef} status={ui.status} />
+      <PauseOverlay
+        open={paused && ui.status === 'playing'}
+        onResume={() => setPausedBoth(false)}
+        onRestart={() => {
+          setUi(INITIAL_UI);
+          setRunId((n) => n + 1);
+        }}
+        onExit={onExit}
+        accentClass="bg-fuchsia-500/80 hover:bg-fuchsia-400 text-black"
+        hint="A · D lane · W/Space jump · S slide"
+      />
       <LeaderboardModal
         open={showLeaderboard}
         onClose={() => setShowLeaderboard(false)}
@@ -577,13 +873,17 @@ function Hud({
   ui,
   onRestart,
   onOpenLeaderboard,
+  onPause,
   onExit,
 }: {
   ui: RunUi;
   onRestart: () => void;
   onOpenLeaderboard: () => void;
+  onPause: () => void;
   onExit?: () => void;
 }) {
+  const chipClass =
+    'pointer-events-auto inline-flex items-center justify-center rounded-md border border-fuchsia-300/30 bg-fuchsia-400/10 p-1.5 text-fuchsia-200 hover:bg-fuchsia-400/20';
   return (
     <>
       <div className="pointer-events-none absolute top-3 right-3 z-20 flex items-center gap-2 font-mono">
@@ -594,6 +894,8 @@ function Hud({
         >
           <Trophy className="h-3.5 w-3.5" /> Leaderboard
         </button>
+        <MuteButton className={chipClass} />
+        {ui.status === 'playing' && <PauseButton onClick={onPause} className={chipClass} />}
         {onExit && (
           <button
             type="button"
@@ -635,6 +937,16 @@ function Hud({
         {ui.multiplier > 1 && (
           <div className="rounded-lg bg-yellow-400/30 backdrop-blur px-3 py-1 text-right animate-pulse">
             <span className="text-sm font-bold text-yellow-100">{ui.multiplier}× combo</span>
+          </div>
+        )}
+        {ui.magnetSec > 0 && (
+          <div className="rounded-lg border border-amber-300/40 bg-amber-400/25 backdrop-blur px-3 py-1 text-right">
+            <span className="text-xs font-bold text-amber-100 tabular-nums">MAGNET {ui.magnetSec}s</span>
+          </div>
+        )}
+        {ui.shieldOn && (
+          <div className="rounded-lg border border-cyan-300/40 bg-cyan-400/20 backdrop-blur px-3 py-1 text-right">
+            <span className="text-xs font-bold text-cyan-100">SHIELD</span>
           </div>
         )}
       </div>
@@ -684,6 +996,7 @@ function MobileControls({
 }) {
   if (status !== 'playing') return null;
   const press = (key: 'left' | 'right' | 'jump' | 'slide', v: number) => {
+    if (v > 0) gameAudio.unlock();
     if (inputRef.current) inputRef.current[key] = v;
   };
   // Lane changes are edge-triggered in the loop, so a tap (down→up) registers

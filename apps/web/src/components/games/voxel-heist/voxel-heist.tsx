@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Trophy, X } from 'lucide-react';
 import {
@@ -8,6 +8,13 @@ import {
   type LeaderboardConfig,
 } from '@/components/games/_shared/leaderboard-modal';
 import type { GameContext } from '@/components/games/_shared/entry-gate';
+import { gameAudio } from '@/components/games/_shared/audio';
+import {
+  MuteButton,
+  PauseButton,
+  PauseOverlay,
+  usePauseKey,
+} from '@/components/games/_shared/game-chrome';
 
 // Voxel Heist — speedrun a voxel vault complex before the alarm clock zeroes.
 //
@@ -38,6 +45,10 @@ const HP_MAX = 3;
 const PLAYER_SPEED = 7;
 const SPRINT_MULT = 1.6;
 const LASER_COUNT = 3;
+const PICKUP_RADIUS = 1.2;
+const TIME_CRYSTAL_BONUS = 6;
+const TIME_CRYSTAL_COUNT = 3;
+const SHIELD_CORE_COUNT = 2;
 
 interface RunUi {
   status: 'playing' | 'lost';
@@ -47,6 +58,8 @@ interface RunUi {
   vaultsCracked: number;
   bestScore: number;
   cracking: number; // 0..1 progress on current vault
+  shield: boolean; // shield core active — absorbs the next laser hit
+  timeFlash: boolean; // briefly true after time was added to the clock
 }
 
 const INITIAL_UI: RunUi = {
@@ -57,6 +70,8 @@ const INITIAL_UI: RunUi = {
   vaultsCracked: 0,
   bestScore: 0,
   cracking: 0,
+  shield: false,
+  timeFlash: false,
 };
 
 interface Vault {
@@ -97,6 +112,10 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
   const [runId, setRunId] = useState(0);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const statusRef = useRef<RunUi['status']>('playing');
+  statusRef.current = ui.status;
   const gameStartRef = useRef<number>(performance.now());
   const inputRef = useRef({
     left: 0,
@@ -106,6 +125,19 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
     sprint: 0,
     interact: 0,
   });
+
+  const setPausedBoth = useCallback((next: boolean) => {
+    pausedRef.current = next;
+    setPaused(next);
+  }, []);
+
+  usePauseKey(
+    useCallback(() => {
+      if (statusRef.current !== 'playing') return;
+      gameAudio.click();
+      setPausedBoth(!pausedRef.current);
+    }, [setPausedBoth]),
+  );
 
   useEffect(() => {
     if (ui.status !== 'lost' || submitted) return;
@@ -127,6 +159,8 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
   useEffect(() => {
     gameStartRef.current = performance.now();
     setSubmitted(false);
+    pausedRef.current = false;
+    setPaused(false);
   }, [runId]);
 
   useEffect(() => {
@@ -278,7 +312,11 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
         break;
       }
       const g = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.8, 1.2), vaultBodyMat);
+      // Clone per vault — the crack-progress emissive pulse mutates the material.
+      const body = new THREE.Mesh(
+        new THREE.BoxGeometry(1.8, 1.8, 1.2),
+        vaultBodyMat.clone(),
+      );
       body.castShadow = true;
       body.receiveShadow = true;
       g.add(body);
@@ -352,6 +390,103 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
       });
     }
 
+    // ─── Pickups (time crystals + shield cores) ─────────────────────
+    type PickupKind = 'time' | 'shield';
+    interface Pickup {
+      group: THREE.Group;
+      pos: THREE.Vector3;
+      kind: PickupKind;
+      taken: boolean;
+      baseY: number;
+      bobPhase: number;
+    }
+    const pickups: Pickup[] = [];
+    const crystalGeo = new THREE.OctahedronGeometry(0.42);
+    const coreGeo = new THREE.IcosahedronGeometry(0.4, 0);
+    const haloGeo = new THREE.SphereGeometry(0.65, 12, 12);
+    const crystalMat = new THREE.MeshStandardMaterial({
+      color: 0x67e8f9,
+      emissive: 0x06b6d4,
+      emissiveIntensity: 1.3,
+      metalness: 0.4,
+      roughness: 0.25,
+    });
+    const coreMat = new THREE.MeshStandardMaterial({
+      color: 0xc4b5fd,
+      emissive: 0x7c3aed,
+      emissiveIntensity: 1.3,
+      metalness: 0.4,
+      roughness: 0.25,
+    });
+    const cyanHaloMat = new THREE.MeshBasicMaterial({
+      color: 0x22d3ee,
+      transparent: true,
+      opacity: 0.18,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const violetHaloMat = new THREE.MeshBasicMaterial({
+      color: 0xa78bfa,
+      transparent: true,
+      opacity: 0.18,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const spawnPickup = (kind: PickupKind) => {
+      let px = 0;
+      let pz = 0;
+      let attempts = 0;
+      // Random spot away from spawn, pillars, vaults, and other pickups.
+      while (attempts++ < 200) {
+        px = (Math.random() - 0.5) * (HALL_HALF * 2 - 8);
+        pz = (Math.random() - 0.5) * (HALL_HALF * 2 - 8);
+        if (Math.hypot(px, pz) < 5) continue;
+        let blocked = false;
+        for (const cell of pillarCells) {
+          if (Math.hypot(px - cell.x, pz - cell.z) < 2) {
+            blocked = true;
+            break;
+          }
+        }
+        if (blocked) continue;
+        for (const v of vaults) {
+          if (Math.hypot(px - v.pos.x, pz - v.pos.z) < 3) {
+            blocked = true;
+            break;
+          }
+        }
+        if (blocked) continue;
+        for (const p of pickups) {
+          if (Math.hypot(px - p.pos.x, pz - p.pos.z) < 3) {
+            blocked = true;
+            break;
+          }
+        }
+        if (!blocked) break;
+      }
+      const g = new THREE.Group();
+      g.add(
+        new THREE.Mesh(
+          kind === 'time' ? crystalGeo : coreGeo,
+          kind === 'time' ? crystalMat : coreMat,
+        ),
+      );
+      g.add(new THREE.Mesh(haloGeo, kind === 'time' ? cyanHaloMat : violetHaloMat));
+      const baseY = 1.0;
+      g.position.set(px, baseY, pz);
+      scene.add(g);
+      pickups.push({
+        group: g,
+        pos: g.position,
+        kind,
+        taken: false,
+        baseY,
+        bobPhase: Math.random() * Math.PI * 2,
+      });
+    };
+    for (let i = 0; i < TIME_CRYSTAL_COUNT; i++) spawnPickup('time');
+    for (let i = 0; i < SHIELD_CORE_COUNT; i++) spawnPickup('shield');
+
     // ─── Player ─────────────────────────────────────────────────────
     const playerGroup = new THREE.Group();
     const playerBody = new THREE.Mesh(
@@ -383,6 +518,23 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
     playerLamp.position.y = 2;
     playerGroup.add(playerLamp);
 
+    // Shield core indicator — a violet ring that orbits while a shield is held.
+    const shieldRingGeo = new THREE.TorusGeometry(0.85, 0.06, 6, 24);
+    const shieldRing = new THREE.Mesh(
+      shieldRingGeo,
+      new THREE.MeshBasicMaterial({
+        color: 0xa78bfa,
+        transparent: true,
+        opacity: 0.85,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    shieldRing.rotation.x = Math.PI / 2;
+    shieldRing.position.y = 0.9;
+    shieldRing.visible = false;
+    playerGroup.add(shieldRing);
+
     // ─── State ──────────────────────────────────────────────────────
     const player = {
       pos: new THREE.Vector3(0, 0, 0),
@@ -390,6 +542,7 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
       facing: 0,
       hp: HP_MAX,
       invuln: 0,
+      shield: false,
     };
     let score = 0;
     let timeLeft = TIME_START;
@@ -397,6 +550,10 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
     let crackingVault: Vault | null = null;
     let status: 'playing' | 'lost' = 'playing';
     let shake = 0;
+    let timeFlashTtl = 0; // HUD timer flash after time is added
+    let lastTickSecond = -1; // low-time tick bookkeeping
+    let alarmPlayed = false;
+    let crackSfxAccum = 0; // rising-tone cadence while cracking
     let bestScore = 0;
     try {
       bestScore = Number(localStorage.getItem('arcadery:voxel-heist:best') ?? 0);
@@ -409,6 +566,7 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
         ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)
       )
         e.preventDefault();
+      gameAudio.unlock();
       keys.add(e.key.toLowerCase());
     };
     const onKeyUp = (e: KeyboardEvent) => keys.delete(e.key.toLowerCase());
@@ -455,6 +613,63 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
       pulses.push({ mesh: m, ttl: 0.6, maxTtl: 0.6, expand });
     };
 
+    // ─── Voxel debris particles ─────────────────────────────────────
+    interface Debris {
+      mesh: THREE.Mesh;
+      vel: THREE.Vector3;
+      ttl: number;
+    }
+    const debris: Debris[] = [];
+    const debrisGeo = new THREE.BoxGeometry(0.16, 0.16, 0.16);
+    const goldDebrisMat = new THREE.MeshStandardMaterial({
+      color: 0xfde047,
+      emissive: 0xfacc15,
+      emissiveIntensity: 1.0,
+    });
+    const sparkDebrisMat = new THREE.MeshStandardMaterial({
+      color: 0xfb923c,
+      emissive: 0xef4444,
+      emissiveIntensity: 1.6,
+    });
+    const cyanDebrisMat = new THREE.MeshStandardMaterial({
+      color: 0x67e8f9,
+      emissive: 0x06b6d4,
+      emissiveIntensity: 1.4,
+    });
+    const violetDebrisMat = new THREE.MeshStandardMaterial({
+      color: 0xc4b5fd,
+      emissive: 0x7c3aed,
+      emissiveIntensity: 1.4,
+    });
+    const spawnDebris = (
+      x: number,
+      y: number,
+      z: number,
+      mat: THREE.MeshStandardMaterial,
+      count: number,
+      up: number,
+    ) => {
+      for (let i = 0; i < count; i++) {
+        const m = new THREE.Mesh(debrisGeo, mat);
+        m.position.set(
+          x + (Math.random() - 0.5) * 0.8,
+          y + (Math.random() - 0.5) * 0.6,
+          z + (Math.random() - 0.5) * 0.8,
+        );
+        m.scale.setScalar(0.7 + Math.random() * 0.9);
+        scene.add(m);
+        debris.push({
+          mesh: m,
+          vel: new THREE.Vector3(
+            (Math.random() - 0.5) * 5,
+            up + Math.random() * up,
+            (Math.random() - 0.5) * 5,
+          ),
+          ttl: 0.6 + Math.random() * 0.5,
+        });
+      }
+    };
+
     // ─── Loop ───────────────────────────────────────────────────────
     let last = performance.now();
     let lastUi = 0;
@@ -464,6 +679,14 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
       raf = requestAnimationFrame(tick);
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
+
+      // Paused: keep rendering the frozen scene, skip all simulation. `last`
+      // keeps advancing so resume doesn't get a giant dt (the countdown is
+      // dt-accumulated, so the clock freezes for free).
+      if (pausedRef.current) {
+        renderer.render(scene, camera);
+        return;
+      }
 
       const input = inputRef.current;
       const left = (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + input.left;
@@ -479,7 +702,25 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
         if (timeLeft <= 0) {
           timeLeft = 0;
           status = 'lost';
+          gameAudio.gameover();
         }
+        // Low-time urgency: alarm once when the clock dips below 10s, then a
+        // tick on every remaining whole second.
+        if (status === 'playing' && timeLeft <= 10) {
+          const sec = Math.ceil(timeLeft);
+          if (sec !== lastTickSecond) {
+            lastTickSecond = sec;
+            gameAudio.tick();
+            if (!alarmPlayed) {
+              alarmPlayed = true;
+              gameAudio.alarm();
+            }
+          }
+        } else if (timeLeft > 10) {
+          lastTickSecond = -1;
+          alarmPlayed = false;
+        }
+        timeFlashTtl = Math.max(0, timeFlashTtl - dt);
 
         // ── Move ───────────────────────────────────────────────────
         const moveDir = new THREE.Vector3(right - left, 0, fwd - back);
@@ -539,11 +780,31 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
           const clampedX = Math.max(-L.length / 2, Math.min(L.length / 2, localX));
           const distToBeam = Math.hypot(localX - clampedX, localZ);
           if (distToBeam < 0.6 && player.invuln <= 0) {
-            player.hp -= 1;
             player.invuln = 0.8;
-            shake = 22;
-            spawnPulse(player.pos.x, 1, player.pos.z, 0xf43f5e, 2.5);
-            if (player.hp <= 0) status = 'lost';
+            if (player.shield) {
+              // Shield core absorbs the hit.
+              player.shield = false;
+              shake = Math.max(shake, 12);
+              spawnDebris(player.pos.x, 1.1, player.pos.z, violetDebrisMat, 10, 2.5);
+              spawnPulse(player.pos.x, 1, player.pos.z, 0xa78bfa, 3);
+              gameAudio.tone({
+                freq: 540,
+                freqTo: 160,
+                type: 'sawtooth',
+                duration: 0.25,
+                volume: 0.18,
+              });
+            } else {
+              player.hp -= 1;
+              shake = 22;
+              spawnDebris(player.pos.x, 1.1, player.pos.z, sparkDebrisMat, 12, 3);
+              spawnPulse(player.pos.x, 1, player.pos.z, 0xf43f5e, 2.5);
+              gameAudio.hit();
+              if (player.hp <= 0) {
+                status = 'lost';
+                gameAudio.gameover();
+              }
+            }
           }
         }
 
@@ -568,17 +829,45 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
             1,
             nearest.vault.progress + dt / VAULT_CRACK_TIME,
           );
-          // Pulse the vault as it cracks.
-          const s = 1 + Math.sin(now * 0.02) * 0.05 * nearest.vault.progress;
+          // Rising drill tone — pitch climbs with crack progress.
+          crackSfxAccum += dt;
+          if (crackSfxAccum >= 0.16) {
+            crackSfxAccum = 0;
+            gameAudio.tone({
+              freq: 260 + nearest.vault.progress * 500,
+              type: 'square',
+              duration: 0.06,
+              volume: 0.06,
+            });
+          }
+          // Pulse the vault as it cracks — scale wobble + emissive surge.
+          const s = 1 + Math.sin(now * 0.02) * 0.08 * nearest.vault.progress;
           nearest.vault.group.scale.set(s, s, s);
+          const crackBodyMat = (nearest.vault.group.children[0] as THREE.Mesh)
+            .material as THREE.MeshStandardMaterial;
+          crackBodyMat.emissiveIntensity =
+            0.4 +
+            nearest.vault.progress * 1.6 +
+            Math.sin(now * 0.03) * 0.4 * nearest.vault.progress;
           if (nearest.vault.progress >= 1) {
             nearest.vault.cracked = true;
             vaultsCracked += 1;
             const timeBonus = Math.max(2, VAULT_TIME_BONUS - vaultsCracked);
             timeLeft += timeBonus;
+            timeFlashTtl = 0.9;
             score += VAULT_SCORE + Math.round(timeLeft) * 10;
             spawnPulse(nearest.vault.pos.x, 1.5, nearest.vault.pos.z, 0xfde047, 5);
+            spawnDebris(
+              nearest.vault.pos.x,
+              1.3,
+              nearest.vault.pos.z,
+              goldDebrisMat,
+              16,
+              3.5,
+            );
+            nearest.vault.group.scale.set(1, 1, 1);
             shake = Math.max(shake, 12);
+            gameAudio.powerup();
             // Hide the vault — replace mat with a faded one.
             (nearest.vault.group.children[0] as THREE.Mesh).material =
               new THREE.MeshStandardMaterial({
@@ -600,17 +889,48 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
             if (vaultsCracked === VAULT_COUNT) {
               score += 1000;
               status = 'lost'; // Heist complete — end the run.
+              gameAudio.victory();
             }
             crackingVault = null;
           }
         } else {
+          crackSfxAccum = 0;
           // Decay cracking progress when player walks away.
           for (const v of vaults) {
             if (v.cracked) continue;
             if (v !== nearest.vault) v.progress = Math.max(0, v.progress - dt * 0.5);
             else if (interact <= 0.5) v.progress = Math.max(0, v.progress - dt * 0.7);
+            // Relax the crack feedback as progress drains.
+            const bm = (v.group.children[0] as THREE.Mesh)
+              .material as THREE.MeshStandardMaterial;
+            bm.emissiveIntensity = 0.4 + v.progress * 1.6;
+            v.group.scale.setScalar(1 + 0.04 * v.progress);
           }
           crackingVault = null;
+        }
+
+        // ── Pickups ─────────────────────────────────────────────────
+        for (const p of pickups) {
+          if (p.taken) continue;
+          p.group.rotation.y += dt * 1.6;
+          p.group.position.y = p.baseY + Math.sin(now * 0.003 + p.bobPhase) * 0.18;
+          const d = Math.hypot(p.pos.x - player.pos.x, p.pos.z - player.pos.z);
+          if (d < PICKUP_RADIUS) {
+            p.taken = true;
+            p.group.visible = false;
+            if (p.kind === 'time') {
+              timeLeft += TIME_CRYSTAL_BONUS;
+              timeFlashTtl = 0.9;
+              spawnDebris(p.pos.x, 1, p.pos.z, cyanDebrisMat, 10, 2.5);
+              spawnPulse(p.pos.x, 1, p.pos.z, 0x22d3ee, 3);
+              gameAudio.coin();
+            } else {
+              player.shield = true;
+              spawnDebris(p.pos.x, 1, p.pos.z, violetDebrisMat, 10, 2.5);
+              spawnPulse(p.pos.x, 1, p.pos.z, 0xa78bfa, 3);
+              gameAudio.powerup();
+            }
+          }
         }
 
         // ── Pulses ──────────────────────────────────────────────────
@@ -640,11 +960,15 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
       } else {
         playerBody.visible = true;
       }
-      // Vault idle bob.
+      // Shield indicator ring.
+      shieldRing.visible = player.shield;
+      if (player.shield) shieldRing.rotation.z += dt * 2.2;
+      // Vault idle bob (point light also surges with crack progress).
       for (const v of vaults) {
         if (!v.cracked) {
           v.group.rotation.y += 0.6 * (1 / 60);
-          v.pointLight.intensity = 0.6 + Math.sin(now * 0.005) * 0.3;
+          v.pointLight.intensity =
+            0.6 + Math.sin(now * 0.005) * 0.3 + v.progress * 1.6;
         }
       }
       // Laser pulse.
@@ -667,6 +991,22 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
       }
       shake *= 0.86;
 
+      // ── Debris physics (keeps settling even after the run ends) ──
+      for (let i = debris.length - 1; i >= 0; i--) {
+        const d = debris[i];
+        d.vel.y -= 22 * dt;
+        d.mesh.position.x += d.vel.x * dt;
+        d.mesh.position.y += d.vel.y * dt;
+        d.mesh.position.z += d.vel.z * dt;
+        d.mesh.rotation.x += dt * 4;
+        d.mesh.rotation.z += dt * 5;
+        d.ttl -= dt;
+        if (d.ttl <= 0) {
+          scene.remove(d.mesh);
+          debris.splice(i, 1);
+        }
+      }
+
       // Persist best.
       if (status === 'lost' && score > bestScore) {
         bestScore = score;
@@ -687,6 +1027,8 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
           vaultsCracked,
           bestScore: Math.max(bestScore, score),
           cracking: crackingVault ? crackingVault.progress : 0,
+          shield: player.shield,
+          timeFlash: timeFlashTtl > 0,
         });
       }
     };
@@ -698,6 +1040,14 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
       window.removeEventListener('keyup', onKeyUp);
       ro.disconnect();
       renderer.dispose();
+      debrisGeo.dispose();
+      crystalGeo.dispose();
+      coreGeo.dispose();
+      haloGeo.dispose();
+      shieldRingGeo.dispose();
+      for (const d of debris) scene.remove(d.mesh);
+      for (const p of pulses) scene.remove(p.mesh);
+      for (const p of pickups) scene.remove(p.group);
       if (renderer.domElement.parentElement === mount) {
         mount.removeChild(renderer.domElement);
       }
@@ -710,13 +1060,26 @@ export function VoxelHeist({ gameContext, onExit }: VoxelHeistProps) {
       <Hud
         ui={ui}
         onRestart={() => {
+          gameAudio.click();
           setUi(INITIAL_UI);
           setRunId((n) => n + 1);
         }}
         onOpenLeaderboard={() => setShowLeaderboard(true)}
+        onPause={() => setPausedBoth(true)}
         onExit={onExit}
       />
       <MobileControls inputRef={inputRef} status={ui.status} />
+      <PauseOverlay
+        open={paused && ui.status === 'playing'}
+        onResume={() => setPausedBoth(false)}
+        onRestart={() => {
+          setUi(INITIAL_UI);
+          setRunId((n) => n + 1);
+        }}
+        onExit={onExit}
+        accentClass="bg-amber-400 hover:bg-amber-300 text-stone-900"
+        hint="WASD move · Shift sprint · E crack vault"
+      />
       <LeaderboardModal
         open={showLeaderboard}
         onClose={() => setShowLeaderboard(false)}
@@ -733,13 +1096,17 @@ function Hud({
   ui,
   onRestart,
   onOpenLeaderboard,
+  onPause,
   onExit,
 }: {
   ui: RunUi;
   onRestart: () => void;
   onOpenLeaderboard: () => void;
+  onPause: () => void;
   onExit?: () => void;
 }) {
+  const chipClass =
+    'pointer-events-auto inline-flex items-center justify-center rounded-md border border-amber-300/30 bg-amber-400/10 p-1.5 text-amber-200 hover:bg-amber-400/20';
   return (
     <>
       <div className="pointer-events-none absolute top-3 right-3 z-20 flex items-center gap-2 font-mono">
@@ -750,6 +1117,10 @@ function Hud({
         >
           <Trophy className="h-3.5 w-3.5" /> Leaderboard
         </button>
+        <MuteButton className={chipClass} />
+        {ui.status === 'playing' && (
+          <PauseButton onClick={onPause} className={chipClass} />
+        )}
         {onExit && (
           <button
             type="button"
@@ -787,8 +1158,12 @@ function Hud({
       </div>
       <div className="pointer-events-none absolute top-16 right-4 z-10 flex flex-col items-end gap-2 font-mono text-white">
         <div
-          className={`rounded-lg backdrop-blur px-3 py-2 text-right tabular-nums ${
-            ui.timeLeft < 10 ? 'bg-rose-500/40 animate-pulse' : 'bg-black/60'
+          className={`rounded-lg backdrop-blur px-3 py-2 text-right tabular-nums transition-colors ${
+            ui.timeFlash
+              ? 'bg-cyan-500/40 ring-1 ring-cyan-300/70'
+              : ui.timeLeft < 10
+                ? 'bg-rose-500/40 animate-pulse'
+                : 'bg-black/60'
           }`}
         >
           <div className="text-[10px] uppercase tracking-widest text-rose-200/70">
@@ -819,6 +1194,13 @@ function Hud({
             {ui.hp === 0 && <span className="text-rose-400 text-sm">—</span>}
           </div>
         </div>
+        {ui.shield && (
+          <div className="rounded-lg border border-violet-300/40 bg-violet-500/30 backdrop-blur px-3 py-1.5 text-right">
+            <span className="text-xs font-bold tracking-widest text-violet-200">
+              SHIELD
+            </span>
+          </div>
+        )}
       </div>
       {ui.cracking > 0 && (
         <div className="pointer-events-none absolute bottom-20 left-1/2 -translate-x-1/2 z-10 w-56 font-mono">
@@ -874,7 +1256,7 @@ function Hud({
         </div>
       )}
       <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 z-10 text-[10px] uppercase tracking-[0.4em] text-white/30 font-mono">
-        WASD move · Shift sprint · E crack vault · Dodge red lasers
+        WASD move · Shift sprint · E crack vault · Cyan = +time · Violet = shield
       </div>
     </>
   );
@@ -901,6 +1283,7 @@ function MobileControls({
     k: 'left' | 'right' | 'fwd' | 'back' | 'sprint' | 'interact',
     v: number,
   ) => {
+    if (v > 0) gameAudio.unlock();
     if (inputRef.current) inputRef.current[k] = v;
   };
   const Btn = ({

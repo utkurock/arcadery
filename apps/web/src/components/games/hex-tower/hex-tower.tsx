@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Trophy, X } from 'lucide-react';
 import {
@@ -8,6 +8,13 @@ import {
   type LeaderboardConfig,
 } from '@/components/games/_shared/leaderboard-modal';
 import type { GameContext } from '@/components/games/_shared/entry-gate';
+import { gameAudio } from '@/components/games/_shared/audio';
+import {
+  MuteButton,
+  PauseButton,
+  PauseOverlay,
+  usePauseKey,
+} from '@/components/games/_shared/game-chrome';
 
 // Hex Tower — pastel-isometric vertical platformer.
 //
@@ -18,6 +25,7 @@ import type { GameContext } from '@/components/games/_shared/entry-gate';
 //     • combo  (mint)          — +1 combo on land + small boost.
 //     • boost  (peach)         — launches the player upward (super jump).
 //     • brittle (rose)         — crumbles ~0.5s after the first landing.
+//     • phase  (sky)           — blinks in and out; only solid while lit.
 //   Gravity always pulls down. Goal is to climb as high as possible without
 //   falling off the tower (you die if your Y drops more than DROP_DEATH below
 //   your best Y so far).
@@ -61,7 +69,7 @@ const INITIAL_UI: RunUi = {
   speedKmh: 0,
 };
 
-type TileKind = 'normal' | 'combo' | 'boost' | 'brittle';
+type TileKind = 'normal' | 'combo' | 'boost' | 'brittle' | 'phase';
 
 interface Tile {
   mesh: THREE.Mesh;
@@ -71,6 +79,7 @@ interface Tile {
   spawned: boolean;
   ring: number;
   slot: number;
+  solid: boolean; // phase tiles toggle this; everything else stays true
 }
 
 interface HexTowerProps {
@@ -94,8 +103,25 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
   const [runId, setRunId] = useState(0);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const statusRef = useRef<RunUi['status']>('playing');
+  statusRef.current = ui.status;
   const gameStartRef = useRef<number>(performance.now());
   const inputRef = useRef({ left: 0, right: 0, fwd: 0, back: 0, jump: 0 });
+
+  const setPausedBoth = useCallback((next: boolean) => {
+    pausedRef.current = next;
+    setPaused(next);
+  }, []);
+
+  usePauseKey(
+    useCallback(() => {
+      if (statusRef.current !== 'playing') return;
+      gameAudio.click();
+      setPausedBoth(!pausedRef.current);
+    }, [setPausedBoth]),
+  );
 
   useEffect(() => {
     if (ui.status !== 'lost' || submitted) return;
@@ -117,6 +143,8 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
   useEffect(() => {
     gameStartRef.current = performance.now();
     setSubmitted(false);
+    pausedRef.current = false;
+    setPaused(false);
   }, [runId]);
 
   useEffect(() => {
@@ -240,6 +268,14 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
         emissiveIntensity: 0.45,
         roughness: 0.5,
       }),
+      phase: new THREE.MeshStandardMaterial({
+        color: 0x93c5fd,
+        emissive: 0x3b82f6,
+        emissiveIntensity: 0.6,
+        roughness: 0.4,
+        transparent: true,
+        opacity: 0.95,
+      }),
     };
     const tileGeometry = new THREE.CylinderGeometry(HEX_R, HEX_R, 0.45, 6, 1, false);
 
@@ -256,6 +292,9 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
     };
 
     const spawnRing = (bandIdx: number, y: number) => {
+      // Difficulty ramps with height: more brittle tiles, wider gaps, and
+      // phase tiles from band 12 (~29m) upward.
+      const diff = Math.min(1, bandIdx / 40);
       for (let i = 0; i < RING_COUNT; i++) {
         const angle = (i / RING_COUNT) * Math.PI * 2 + bandIdx * 0.18;
         const px = Math.cos(angle) * RING_RADIUS;
@@ -265,10 +304,15 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
         let kind: TileKind = 'normal';
         if (roll < 0.05 && bandIdx > 1) kind = 'boost';
         else if (roll < 0.22) kind = 'combo';
-        else if (roll < 0.38 && bandIdx > 0) kind = 'brittle';
-        // Skip ~15% of normals to create gaps that demand jumps.
-        if (kind === 'normal' && roll > 0.85) continue;
-        const tile = new THREE.Mesh(tileGeometry, tileMats[kind]);
+        else if (roll < 0.38 + diff * 0.1 && bandIdx > 0) kind = 'brittle';
+        else if (roll < 0.52 + diff * 0.06 && bandIdx > 12) kind = 'phase';
+        // Skip some normals to create gaps that demand jumps — more with height.
+        if (kind === 'normal' && roll > 0.85 - diff * 0.1) continue;
+        const tile = new THREE.Mesh(
+          tileGeometry,
+          // Phase tiles animate opacity individually, so each needs its own material.
+          kind === 'phase' ? tileMats.phase.clone() : tileMats[kind],
+        );
         tile.rotation.y = Math.PI / 6; // flat-top hex
         tile.position.set(px, y, pz);
         tile.castShadow = true;
@@ -282,6 +326,7 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
           spawned: true,
           ring: bandIdx,
           slot: i,
+          solid: true,
         });
       }
     };
@@ -338,6 +383,7 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
       groundTile: null as Tile | null,
     };
     let bestY = 0;
+    let lastMilestone = 0;
     let combo = 0;
     let comboMax = 0;
     let comboDecay = 0;
@@ -380,6 +426,47 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
       }
     };
 
+    // Soft puffs for landings and sparkles for combo/boost tiles. Reuses the
+    // debris updater — only geometry, spread, and lifetime differ.
+    const dustMat = new THREE.MeshStandardMaterial({
+      color: 0xfff7ed,
+      emissive: 0xfde68a,
+      emissiveIntensity: 0.4,
+      transparent: true,
+      opacity: 0.85,
+    });
+    const sparkMat = new THREE.MeshStandardMaterial({
+      color: 0x86efac,
+      emissive: 0x22c55e,
+      emissiveIntensity: 1.2,
+    });
+    const spawnPuff = (
+      pos: THREE.Vector3,
+      mat: THREE.MeshStandardMaterial,
+      count: number,
+      up: number,
+    ) => {
+      for (let i = 0; i < count; i++) {
+        const m = new THREE.Mesh(new THREE.IcosahedronGeometry(0.09 + Math.random() * 0.08, 0), mat);
+        m.position.set(
+          pos.x + (Math.random() - 0.5) * 0.9,
+          pos.y + TILE_HALF_HEIGHT + 0.05,
+          pos.z + (Math.random() - 0.5) * 0.9,
+        );
+        m.castShadow = false;
+        scene.add(m);
+        debris.push({
+          mesh: m,
+          vel: new THREE.Vector3(
+            (Math.random() - 0.5) * 2.5,
+            up + Math.random() * up,
+            (Math.random() - 0.5) * 2.5,
+          ),
+          ttl: 0.5 + Math.random() * 0.3,
+        });
+      }
+    };
+
     // ─── Input ──────────────────────────────────────────────────────
     const keys = new Set<string>();
     const onKeyDown = (e: KeyboardEvent) => {
@@ -388,6 +475,7 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
       ) {
         e.preventDefault();
       }
+      gameAudio.unlock();
       keys.add(e.key.toLowerCase());
     };
     const onKeyUp = (e: KeyboardEvent) => keys.delete(e.key.toLowerCase());
@@ -411,6 +499,7 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
       let best: Tile | null = null;
       let bestDy = Infinity;
       for (const t of tiles) {
+        if (!t.solid) continue; // phase tiles pass through while faded out
         const tp = t.position;
         const top = tp.y + TILE_HALF_HEIGHT;
         const dy = py - top;
@@ -432,6 +521,7 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
           spawned: true,
           ring: -1,
           slot: -1,
+          solid: true,
         };
       }
       return best;
@@ -447,6 +537,13 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
 
+      // Paused: keep rendering the frozen scene, skip all simulation. `last`
+      // keeps advancing so resume doesn't get a giant dt.
+      if (pausedRef.current) {
+        renderer.render(scene, camera);
+        return;
+      }
+
       const input = inputRef.current;
       const left = (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + input.left;
       const right = (keys.has('d') || keys.has('arrowright') ? 1 : 0) + input.right;
@@ -455,6 +552,16 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
       const jump = (keys.has(' ') ? 1 : 0) + input.jump;
 
       if (status === 'playing') {
+        // ── Phase tiles blink in/out on a per-tile clock ────────────
+        for (const t of tiles) {
+          if (t.kind !== 'phase') continue;
+          const ph = Math.sin(now / 1000 * 1.8 + t.ring * 1.3 + t.slot * 0.9);
+          t.solid = ph > -0.2;
+          const mat = t.mesh.material as THREE.MeshStandardMaterial;
+          mat.opacity = t.solid ? 0.95 : 0.15;
+          mat.emissiveIntensity = t.solid ? 0.6 : 0.1;
+        }
+
         // ── Camera-relative move axes ───────────────────────────────
         const cosY = Math.cos(camYaw);
         const sinY = Math.sin(camYaw);
@@ -497,6 +604,8 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
                 comboMax = Math.max(comboMax, combo);
                 comboDecay = 4;
                 shake = Math.max(shake, 4);
+                gameAudio.combo(combo);
+                spawnPuff(t.position, sparkMat, 8, 3);
               } else if (t.kind === 'boost') {
                 player.vy = BOOST_JUMP_VEL;
                 onGround = false;
@@ -504,8 +613,15 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
                 combo += 1;
                 comboMax = Math.max(comboMax, combo);
                 comboDecay = 4;
+                gameAudio.boost();
+                spawnPuff(t.position, tileMats.boost, 10, 4);
               } else if (t.kind === 'brittle') {
                 t.landedAt = now;
+                gameAudio.tick();
+                spawnPuff(t.position, dustMat, 4, 1.5);
+              } else {
+                gameAudio.land();
+                spawnPuff(t.position, dustMat, 4, 1.5);
               }
               if (wasNewTile && t.kind !== 'brittle') {
                 t.landedAt = now;
@@ -528,6 +644,7 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
         if (jump > 0.5 && onGround) {
           player.vy = JUMP_VEL;
           player.onGround = false;
+          gameAudio.jump();
         }
 
         // ── Brittle tile crumble ────────────────────────────────────
@@ -544,6 +661,7 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
             }
             if (elapsed >= CRUMBLE_DELAY) {
               spawnDebris(t.position, tileMats.brittle);
+              gameAudio.crumble();
               scene.remove(t.mesh);
               tiles.splice(i, 1);
             }
@@ -569,8 +687,15 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
 
         // ── Best Y + death check ───────────────────────────────────
         if (player.y > bestY) bestY = player.y;
+        // Celebrate every 50m climbed.
+        if (Math.floor(bestY / 50) > Math.floor(lastMilestone / 50)) {
+          gameAudio.levelup();
+          shake = Math.max(shake, 5);
+        }
+        lastMilestone = bestY;
         if (player.y < bestY - DROP_DEATH) {
           status = 'lost';
+          gameAudio.gameover();
           bestStored = Math.max(bestStored, Math.floor(bestY));
           try {
             localStorage.setItem('arcadery:hex-tower:best', String(bestStored));
@@ -658,9 +783,21 @@ export function HexTower({ gameContext, onExit }: HexTowerProps) {
           setRunId((n) => n + 1);
         }}
         onOpenLeaderboard={() => setShowLeaderboard(true)}
+        onPause={() => setPausedBoth(true)}
         onExit={onExit}
       />
       <MobileControls inputRef={inputRef} status={ui.status} />
+      <PauseOverlay
+        open={paused && ui.status === 'playing'}
+        onResume={() => setPausedBoth(false)}
+        onRestart={() => {
+          setUi(INITIAL_UI);
+          setRunId((n) => n + 1);
+        }}
+        onExit={onExit}
+        accentClass="bg-rose-500 hover:bg-rose-600"
+        hint="WASD move · Space jump"
+      />
       <LeaderboardModal
         open={showLeaderboard}
         onClose={() => setShowLeaderboard(false)}
@@ -677,13 +814,17 @@ function Hud({
   ui,
   onRestart,
   onOpenLeaderboard,
+  onPause,
   onExit,
 }: {
   ui: RunUi;
   onRestart: () => void;
   onOpenLeaderboard: () => void;
+  onPause: () => void;
   onExit?: () => void;
 }) {
+  const chipClass =
+    'pointer-events-auto inline-flex items-center justify-center rounded-md border border-rose-300/40 bg-rose-300/20 p-1.5 text-rose-800 hover:bg-rose-300/40';
   return (
     <>
       <div className="pointer-events-none absolute top-3 right-3 z-20 flex items-center gap-2 font-mono">
@@ -694,6 +835,8 @@ function Hud({
         >
           <Trophy className="h-3.5 w-3.5" /> Leaderboard
         </button>
+        <MuteButton className={chipClass} />
+        {ui.status === 'playing' && <PauseButton onClick={onPause} className={chipClass} />}
         {onExit && (
           <button
             type="button"
@@ -766,7 +909,7 @@ function Hud({
         </div>
       )}
       <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 z-10 text-[10px] uppercase tracking-[0.4em] text-stone-700/50 font-mono">
-        WASD move · Space jump · Mint = combo · Peach = launch · Rose = crumble
+        WASD move · Space jump · Mint = combo · Peach = launch · Rose = crumble · Sky = blinks
       </div>
     </>
   );
@@ -787,6 +930,7 @@ function MobileControls({
 }) {
   if (status !== 'playing') return null;
   const press = (k: 'left' | 'right' | 'fwd' | 'back' | 'jump', v: number) => {
+    if (v > 0) gameAudio.unlock();
     if (inputRef.current) inputRef.current[k] = v;
   };
   const Btn = ({
